@@ -1,6 +1,6 @@
 # priority functions for joining columns with the same info
-
 import pandas as pd
+
 
 def prioritize_summary(row, left, right):
     """
