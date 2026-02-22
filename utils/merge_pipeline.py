@@ -19,12 +19,11 @@ CANONICAL_SCHEMA = {
     'publisher': 'string',
     'players': 'int64',
     'cooperative': 'string',
-    'rating': 'float64',
+    'rating': 'int64',
     'user_rating': 'float64',
 }
 
-# Canonical columns (derived from schema keys)
-DEFAULT_COLUMNS = list(CANONICAL_SCHEMA.keys())
+DEFAULT_COLUMNS = CANONICAL_SCHEMA.keys()
 
 # Key columns for deduplication and merging
 KEY_COLUMNS = ("name", "platform")
@@ -226,7 +225,7 @@ def run_merge_pipeline(
     main_config: SourceConfig,
     source_configs: Sequence[SourceConfig],
     target_columns: Sequence[str],
-    key_columns: Sequence[str] = ("name", "platform"),
+    key_columns: Sequence[str] = KEY_COLUMNS,
     resolver_map: Optional[Mapping[str, Any]] = None,
     schema: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
