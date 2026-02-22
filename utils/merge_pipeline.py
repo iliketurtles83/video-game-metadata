@@ -4,7 +4,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from resolvers import pick_first, resolver as default_resolver
+from utils.resolvers import pick_first, resolver as default_resolver
 
 # Canonical schema: defines expected types for all columns
 CANONICAL_SCHEMA = {
@@ -27,8 +27,6 @@ CANONICAL_SCHEMA = {
 SeriesTransform = Callable[[pd.Series], pd.Series]
 DataFrameLoader = Callable[[], pd.DataFrame]
 DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
-
-RATING_COLUMNS = ("rating", "user_rating")
 
 
 @dataclass
@@ -135,7 +133,8 @@ def coerce_to_schema(
                 out[column] = pd.to_datetime(out[column], errors='coerce')
             elif dtype == 'string':
                 # Standardize missing value placeholders to NaN
-                out[column] = out[column].replace(['', 'N/A', 'null', 'None', 'NA', 'n/a'], np.nan)
+                mask = out[column].astype(str).isin(['', 'N/A', 'null', 'None', 'NA', 'n/a'])
+                out[column] = out[column].where(~mask, np.nan)
             
             # Warn if entire column became NaN
             final_non_null = out[column].notna().sum()
@@ -180,21 +179,6 @@ def validate_key_column_values(
     return out
 
 
-def round_decimal_columns(
-    df: pd.DataFrame,
-    columns: Sequence[str],
-    decimals: int = 2,
-) -> pd.DataFrame:
-    out = df.copy()
-
-    for column in columns:
-        if column not in out.columns:
-            continue
-        out[column] = pd.to_numeric(out[column], errors='coerce').round(decimals)
-
-    return out
-
-
 def merge_into_main(
     main_df: pd.DataFrame,
     source_df: pd.DataFrame,
@@ -202,6 +186,9 @@ def merge_into_main(
     resolver_map: Mapping[str, Any],
     schema: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
+    # Ensure both dataframes have the same columns in the same order before concat
+    all_columns = main_df.columns.tolist()
+    source_df = source_df.reindex(columns=all_columns)
     stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
     
     # Coerce to canonical types before aggregation
@@ -259,7 +246,5 @@ def run_merge_pipeline(
             resolver_map=effective_resolver,
             schema=effective_schema,
         )
-
-    merged = round_decimal_columns(merged, RATING_COLUMNS, decimals=2)
 
     return merged

@@ -28,13 +28,6 @@ def _flatten_genres(value):
         yield str(value)
 
 
-def _canonical_genre_name(value):
-    cleaned = " ".join(str(value).strip().split())
-    if not cleaned:
-        return ""
-    return cleaned.title()
-
-
 # --- Resolver Functions ---
 def pick_first(series):
     values = _clean_strings(series)
@@ -46,36 +39,42 @@ def pick_longer(series):
     return max(values, key=len) if values else np.nan
 
 def merge_genres(series):
-    canonical_genres = {}
+    """Merge genres from multiple sources: split on delimiters, combine, dedupe."""
+    genres = set()
     for value in series.dropna():
         for genre in _flatten_genres(value):
-            canonical = _canonical_genre_name(genre)
-            if not canonical:
-                continue
-            canonical_genres[canonical.casefold()] = canonical
-    if not canonical_genres:
-        return np.nan
-    return ", ".join(sorted(canonical_genres.values()))
+            genres.add(genre)
+    return ", ".join(sorted(genres)) if genres else np.nan
 
 
 def any_truthy(series):
     truthy = {"true", "yes", "y", "1", "t"}
     falsy = {"false", "no", "n", "0", "f"}
+    saw_explicit_false = False
+
     for value in series.dropna():
         if isinstance(value, str):
             normalized = value.strip().lower()
             if normalized in truthy:
                 return True
             if normalized in falsy:
+                saw_explicit_false = True
                 continue
-            return True
+            saw_explicit_false = True
+            continue
         if isinstance(value, (int, float)):
-            if value == 0 or (isinstance(value, float) and np.isnan(value)):
+            if isinstance(value, float) and np.isnan(value):
+                continue
+            if value == 0:
+                saw_explicit_false = True
                 continue
             return True
         if bool(value):
             return True
-    return False
+        saw_explicit_false = True
+    if saw_explicit_false:
+        return False
+    return np.nan
 
 # --- Resolver Dictionary ---
 resolver = {
