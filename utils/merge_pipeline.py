@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
@@ -5,6 +6,42 @@ import numpy as np
 import pandas as pd
 
 from utils.resolvers import pick_first, resolver as default_resolver
+
+
+def clean_game_name(name: str) -> str:
+    """
+    Clean game name by removing region codes, version tags, fixing encoding, etc.
+    Examples:
+        "Super Mario World (U)" -> "Super Mario World"
+        "Zelda (E) [!]" -> "Zelda"
+        "AstÃ©rix" -> "Asterix"
+        "MEGA MAN" -> "Mega Man"
+        "Foo  : Bar" -> "Foo: Bar"
+    """
+    if not name:
+        return name
+    
+    # Fix mojibake/encoding issues: decode latin-1 encoded as utf-8
+    try:
+        name = name.encode('latin-1').decode('utf-8')
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+    
+    # Remove region codes: (U), (E), (J), (USA), etc.
+    name = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
+    # Remove tags: [!], [a], [b1], etc.
+    name = re.sub(r'\s*\[[^\]]*\]\s*', ' ', name)
+    # Remove spaces before colons: " :" -> ":"
+    name = re.sub(r'\s+:', ':', name)
+    # Remove extra whitespace
+    name = ' '.join(name.split())
+    
+    # Normalize all-caps names to title case
+    if name.isupper() and len(name) > 1:
+        name = name.title()
+    
+    return name.strip()
+
 
 # Canonical schema: defines expected types for all columns
 CANONICAL_SCHEMA = {
@@ -56,7 +93,8 @@ def load_source(config: SourceConfig) -> pd.DataFrame:
     if config.loader is not None:
         frame = config.loader()
     elif config.path is not None:
-        frame = pd.read_csv(config.path, **config.read_csv_kwargs)
+        kwargs = {**config.read_csv_kwargs, 'low_memory': False}
+        frame = pd.read_csv(config.path, **kwargs)
     else:
         raise ValueError(f"Source '{config.name}' requires either path or loader")
 
@@ -194,11 +232,13 @@ def merge_into_main(
     # Ensure both dataframes have the same columns in the same order before concat
     all_columns = main_df.columns.tolist()
     source_df = source_df.reindex(columns=all_columns)
-    stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
     
-    # Coerce to canonical types before aggregation
+    # Coerce to schema dtypes before concat to avoid FutureWarning
     if schema is not None:
-        stacked = coerce_to_schema(stacked, schema)
+        main_df = coerce_to_schema(main_df, schema)
+        source_df = coerce_to_schema(source_df, schema)
+    
+    stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
 
     agg_map: dict[str, Any] = {}
     for column in stacked.columns:
