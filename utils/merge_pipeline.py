@@ -23,6 +23,12 @@ CANONICAL_SCHEMA = {
     'user_rating': 'float64',
 }
 
+# Canonical columns (derived from schema keys)
+DEFAULT_COLUMNS = list(CANONICAL_SCHEMA.keys())
+
+# Key columns for deduplication and merging
+KEY_COLUMNS = ("name", "platform")
+
 
 SeriesTransform = Callable[[pd.Series], pd.Series]
 DataFrameLoader = Callable[[], pd.DataFrame]
