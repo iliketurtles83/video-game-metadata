@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -88,6 +89,21 @@ def clean_game_name(name: str) -> str:
     return name.strip()
 
 
+def clean_filename(filename: Any) -> Any:
+    """Normalize filename values to a stem-only identifier.
+
+    Example: './game name.zip' -> 'game name'.
+    Non-string or missing values are returned unchanged.
+    """
+    if pd.isna(filename):
+        return filename
+
+    try:
+        return Path(str(filename)).stem
+    except (TypeError, ValueError):
+        return filename
+
+
 
 
 
@@ -117,7 +133,7 @@ def normalize_source(
     if config.rename_map:
         out = out.rename(columns=dict(config.rename_map))
 
-    # translate platform names if mapping is provided
+    # rename platform names if mapping is provided
     if config.platform_map and "platform" in out.columns:
         out["platform"] = out["platform"].replace(dict(config.platform_map))
 
@@ -138,6 +154,10 @@ def normalize_source(
     # Clean names before key-based validation/merge
     if 'name' in out.columns:
         out['name'] = out['name'].apply(lambda x: clean_game_name(x) if pd.notna(x) else x)
+
+    # Normalize filename paths (e.g., './game name.zip' -> 'game name')
+    if 'filename' in out.columns:
+        out['filename'] = out['filename'].apply(clean_filename)
 
     # make up missing columns
     for column in target_columns:
@@ -285,6 +305,7 @@ def run_merge_pipeline(
         target_columns=effective_target_columns,
         key_columns=key_columns,
     )
+    main_length = len(merged)
 
     for source_config in source_configs:
         source = prepare_source(
@@ -299,6 +320,10 @@ def run_merge_pipeline(
             resolver_map=effective_resolver,
             schema=effective_schema,
         )
-        print(f"{source_config.name} length: {len(source)}, main length: {len(merged)}")
+        source_length = len(source)
+        merged_length = len(merged)
+        games_added = merged_length - main_length
+        main_length = merged_length
+        print(f"{source_config.name} length: {source_length}, main length: {merged_length}, games added: {games_added}")
 
     return merged

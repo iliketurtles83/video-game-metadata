@@ -107,9 +107,7 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
                 else:
                     value = elem.text.strip()
 
-                if xml_tag == "path" and value:
-                    value = Path(str(value)).stem
-                elif xml_tag == "rating" and value:
+                if xml_tag == "rating" and value:
                     value = parse_rating(str(value))
 
                 game_data[target_field] = value
@@ -156,13 +154,13 @@ def load_all_gamelists(
         games = parse_gamelist_xml(xml_file, platform_name)
         all_games.extend(games)
         
-        print(f"{len(games)} games from {platform_dir} ({platform_name})")
+        # print(f"{platform_name}: {len(games)}")
     
     # Convert to DataFrame
     df = pd.DataFrame(all_games)
     
-    print(f"\nTotal games loaded: {len(df)}")
-    if not df.empty:
-        print(f"Platforms: {df['platform'].nunique()}")
+    # print(f"\nTotal games loaded: {len(df)}")
+    # if not df.empty:
+    #     print(f"Platforms: {df['platform'].nunique()}")
     
     return df
