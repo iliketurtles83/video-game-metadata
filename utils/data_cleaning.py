@@ -9,6 +9,37 @@ import numpy as np
 import pandas as pd
 
 
+
+
+
+def parse_players(
+    df: pd.DataFrame,
+    players_str_col: str = "players",
+) -> pd.DataFrame:
+    """
+    Parse player counts from strings like "1-2", "1-4", "2", "1-4 players", etc.
+    Uses the maximum numeric token found; invalid/missing values return null.
+    """
+    out = df.copy()
+
+    if players_str_col not in out.columns:
+        return out
+
+    def parse_players_value(players_str: Optional[str]) -> Optional[int]:
+        if players_str is None or pd.isna(players_str):
+            return None
+
+        players_text = str(players_str).strip()
+        numeric_tokens = re.findall(r"\d+", players_text)
+        if not numeric_tokens:
+            return None
+
+        return max(int(token) for token in numeric_tokens)
+
+    out[players_str_col] = out[players_str_col].apply(parse_players_value).astype("Int64")
+    return out
+
+
 def translate_genres(
     df: pd.DataFrame,
     genre_column: str = "genres",
@@ -16,7 +47,7 @@ def translate_genres(
 ) -> pd.DataFrame:
     """
     Translate genre terms using a provided mapping (e.g., Portuguese to English).
-    Handles comma/semicolon/hyphen delimited lists. Runs before normalize_genres.
+    Handles comma/semicolon delimited lists. Runs before normalize_genres.
     """
     if translation_map is None or genre_column not in df.columns:
         return df.copy()
@@ -28,7 +59,7 @@ def translate_genres(
             return value
 
         # Split on delimiters
-        parts = re.split(r'[;,\-]', str(value))
+        parts = re.split(r'[;,]', str(value))
         translated_parts = []
 
         for part in parts:
@@ -100,13 +131,35 @@ def derive_release_year(
     return out
 
 
+def infer_cooperative_from_players(
+    df: pd.DataFrame,
+    players_col: str = "players",
+    cooperative_col: str = "cooperative",
+) -> pd.DataFrame:
+    """
+    Infer cooperative values from player count.
+    Rule: if cooperative is missing and players == 1, set cooperative to False.
+    """
+    out = df.copy()
+
+    if players_col not in out.columns or cooperative_col not in out.columns:
+        return out
+
+    missing_cooperative = out[cooperative_col].isna()
+    single_player = pd.to_numeric(out[players_col], errors="coerce").eq(1)
+    fill_mask = missing_cooperative & single_player
+
+    out.loc[fill_mask, cooperative_col] = False
+    return out
+
+
 def normalize_release_date(
     df: pd.DataFrame,
     date_column: str = "release_date",
 ) -> pd.DataFrame:
     """
-    Normalize release date values to YYYY-MM-DD (drop time component).
-    Missing values remain as NaN (not 'NaT' string).
+    Normalize release date values to pandas datetime (YYYY-MM-DD, no time component).
+    Missing values remain as NaT.
     """
     out = df.copy()
 
@@ -114,12 +167,9 @@ def normalize_release_date(
         return out
 
     parsed_dates = pd.to_datetime(out[date_column], errors="coerce")
-    
-    # Create a new series with formatted dates (strings) or NaN
-    formatted_dates = parsed_dates.dt.strftime("%Y-%m-%d")
-    formatted_dates = formatted_dates.where(parsed_dates.notna(), np.nan)
-    
-    out[date_column] = formatted_dates
+
+    # Keep datetime64 dtype while dropping the time component
+    out[date_column] = parsed_dates.dt.normalize()
 
     return out
 
@@ -147,9 +197,11 @@ def run_cleaning_pipeline(
     df: pd.DataFrame,
     normalize_genres_col: str = "genres",
     normalize_date_col: str = "release_date",
+    parse_players_col: str = "players",
+    cooperative_col: str = "cooperative",
     derive_year_col: str = "release_year",
     round_columns: Sequence[str] = ("rating", "user_rating"),
-    round_decimals: int = 2,
+    round_decimals: int = 1,
     genre_translation_map: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
     """
@@ -159,6 +211,8 @@ def run_cleaning_pipeline(
         df: Merged dataframe from run_merge_pipeline
         normalize_genres_col: Genre column name to normalize
         normalize_date_col: Date column name to normalize to YYYY-MM-DD
+        parse_players_col: Players column name to parse to max integer players
+        cooperative_col: Cooperative column name to infer from player count
         derive_year_col: Release year column to fill from release_date
         round_columns: Columns to round for display
         round_decimals: Number of decimal places to round to
@@ -171,6 +225,8 @@ def run_cleaning_pipeline(
     out = translate_genres(out, genre_column=normalize_genres_col, translation_map=genre_translation_map)
     out = normalize_genres(out, genre_column=normalize_genres_col)
     out = normalize_release_date(out, date_column=normalize_date_col)
+    out = parse_players(out, players_str_col=parse_players_col)
+    out = infer_cooperative_from_players(out, players_col=parse_players_col, cooperative_col=cooperative_col)
     out = derive_release_year(out, year_column=derive_year_col)
     out = round_decimal_columns(out, columns=round_columns, decimals=round_decimals)
     return out
