@@ -8,15 +8,60 @@ import pandas as pd
 from utils.resolvers import pick_first, resolver as default_resolver
 
 
+# Canonical schema: defines expected types for all columns
+CANONICAL_SCHEMA = {
+    'name': 'string',
+    'filename': 'string',
+    'summary': 'string',
+    'platform': 'string',
+    'release_date': 'datetime64[ns]',
+    'release_year': 'int64',
+    'genres': 'string',
+    'developer': 'string',
+    'publisher': 'string',
+    'players': 'string',
+    'cooperative': 'string',
+    'rating': 'int64',
+    'user_rating': 'float64',
+}
+
+DEFAULT_COLUMNS = CANONICAL_SCHEMA.keys()
+
+# Key columns for deduplication and merging
+KEY_COLUMNS = ("name", "platform")
+
+
+SeriesTransform = Callable[[pd.Series], pd.Series]
+DataFrameLoader = Callable[[], pd.DataFrame]
+DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
+
+
+@dataclass
+class SourceConfig:
+    name: str
+    path: Optional[str] = None
+    rename_map: Mapping[str, str] = field(default_factory=dict)
+    platform_map: Mapping[str, str] = field(default_factory=dict)
+    constants: Mapping[str, Any] = field(default_factory=dict)
+    transforms: Mapping[str, SeriesTransform] = field(default_factory=dict)
+    dropna_subset: Optional[Sequence[str]] = None
+    read_csv_kwargs: Mapping[str, Any] = field(default_factory=dict)
+    loader: Optional[DataFrameLoader] = None
+    post_load: Optional[DataFramePostLoad] = None
+
+
 def clean_game_name(name: str) -> str:
-    """
-    Clean game name by removing region codes, version tags, fixing encoding, etc.
-    Examples:
-        "Super Mario World (U)" -> "Super Mario World"
-        "Zelda (E) [!]" -> "Zelda"
-        "AstÃ©rix" -> "Asterix"
-        "MEGA MAN" -> "Mega Man"
-        "Foo  : Bar" -> "Foo: Bar"
+    """Normalize a game title by removing region/version tags, fixing common encoding
+    issues, and standardizing whitespace and capitalization.
+    Performs the following steps:
+    - Attempts to fix mojibake by decoding latin-1 bytes as UTF-8.
+    - Strips region codes in parentheses and tags in brackets.
+    - Removes extra spaces before colons and collapses repeated whitespace.
+    - Converts fully uppercase titles to title case.
+    Args:
+        name: Raw game title string.
+    Returns:
+        A cleaned, human-readable game title string.
     """
     if not name:
         return name
@@ -43,50 +88,7 @@ def clean_game_name(name: str) -> str:
     return name.strip()
 
 
-# Canonical schema: defines expected types for all columns
-CANONICAL_SCHEMA = {
-    'name': 'string',
-    'filename': 'string',
-    'summary': 'string',
-    'platform': 'string',
-    'release_date': 'datetime64[ns]',
-    'release_year': 'int64',
-    'genres': 'string',
-    'developer': 'string',
-    'publisher': 'string',
-    'players': 'int64',
-    'cooperative': 'string',
-    'rating': 'int64',
-    'user_rating': 'float64',
-}
 
-DEFAULT_COLUMNS = CANONICAL_SCHEMA.keys()
-
-# Key columns for deduplication and merging
-KEY_COLUMNS = ("name", "platform")
-
-
-SeriesTransform = Callable[[pd.Series], pd.Series]
-DataFrameLoader = Callable[[], pd.DataFrame]
-DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
-
-
-@dataclass
-class SourceConfig:
-    name: str
-    path: Optional[str] = None
-    keep_columns: Optional[Sequence[str]] = None
-    rename_map: Mapping[str, str] = field(default_factory=dict)
-    platform_map: Mapping[str, str] = field(default_factory=dict)
-    constants: Mapping[str, Any] = field(default_factory=dict)
-    transforms: Mapping[str, SeriesTransform] = field(default_factory=dict)
-    replace_map: Optional[dict[Any, Any]] = None
-    dropna_subset: Optional[Sequence[str]] = None
-    dedupe_sort: Optional[Sequence[str]] = None
-    dedupe_subset: Optional[Sequence[str]] = None
-    read_csv_kwargs: Mapping[str, Any] = field(default_factory=dict)
-    loader: Optional[DataFrameLoader] = None
-    post_load: Optional[DataFramePostLoad] = None
 
 
 def load_source(config: SourceConfig) -> pd.DataFrame:
@@ -111,42 +113,33 @@ def normalize_source(
 ) -> pd.DataFrame:
     out = df.copy()
 
-    if config.replace_map:
-        out = out.replace(config.replace_map)
-
-    if config.keep_columns:
-        missing = [column for column in config.keep_columns if column not in out.columns]
-        if missing:
-            raise ValueError(f"{config.name}: missing keep_columns {missing}")
-        out = out.loc[:, list(config.keep_columns)]
-
+    # rename columns according to map if it is provided
     if config.rename_map:
         out = out.rename(columns=dict(config.rename_map))
 
+    # translate platform names if mapping is provided
     if config.platform_map and "platform" in out.columns:
         out["platform"] = out["platform"].replace(dict(config.platform_map))
 
+    # set constant values for columns if provided (usually if data source has no platform)
     if config.constants:
         for column, value in config.constants.items():
             out[column] = value
 
+    # apply any column-specific transforms if provided
     for column, transform in config.transforms.items():
         if column in out.columns:
             out[column] = transform(out[column])
 
-    if config.dropna_subset:
-        out = out.dropna(subset=list(config.dropna_subset))
+    # convert release_date to datetime
+    if 'release_date' in out.columns:
+        out['release_date'] = pd.to_datetime(out['release_date'], errors='coerce')
 
-    if config.dedupe_sort:
-        existing_sort_columns = [column for column in config.dedupe_sort if column in out.columns]
-        if existing_sort_columns:
-            out = out.sort_values(existing_sort_columns)
+    # Clean names before key-based validation/merge
+    if 'name' in out.columns:
+        out['name'] = out['name'].apply(lambda x: clean_game_name(x) if pd.notna(x) else x)
 
-    if config.dedupe_subset:
-        subset = [column for column in config.dedupe_subset if column in out.columns]
-        if subset:
-            out = out.drop_duplicates(subset=subset, keep="first")
-
+    # make up missing columns
     for column in target_columns:
         if column not in out.columns:
             out[column] = np.nan
@@ -264,24 +257,39 @@ def prepare_source(
 def run_merge_pipeline(
     main_config: SourceConfig,
     source_configs: Sequence[SourceConfig],
-    target_columns: Sequence[str],
+    target_columns: Optional[Sequence[str]] = None,
     key_columns: Sequence[str] = KEY_COLUMNS,
     resolver_map: Optional[Mapping[str, Any]] = None,
     schema: Optional[Mapping[str, str]] = None,
 ) -> pd.DataFrame:
+    """Orchestrate merging of multiple data sources into a canonical schema.
+    
+    Args:
+        main_config: Primary dataset configuration (base for merging).
+        source_configs: List of additional sources to merge into main.
+        target_columns: Columns to include in output (defaults to CANONICAL_SCHEMA).
+        key_columns: Columns for grouping/dedup (defaults to ('name', 'platform')).
+                     Rows with NaN in key columns are automatically dropped.
+        resolver_map: Custom aggregation functions per column during merge.
+        schema: Type coercion mapping (defaults to CANONICAL_SCHEMA).
+    
+    Returns:
+        Merged DataFrame with deduplicated rows grouped by key_columns.
+    """
     effective_resolver = resolver_map or default_resolver
     effective_schema = schema or CANONICAL_SCHEMA
+    effective_target_columns = target_columns or DEFAULT_COLUMNS
 
     merged = prepare_source(
         main_config,
-        target_columns=target_columns,
+        target_columns=effective_target_columns,
         key_columns=key_columns,
     )
 
     for source_config in source_configs:
         source = prepare_source(
             source_config,
-            target_columns=target_columns,
+            target_columns=effective_target_columns,
             key_columns=key_columns,
         )
         merged = merge_into_main(
@@ -291,5 +299,6 @@ def run_merge_pipeline(
             resolver_map=effective_resolver,
             schema=effective_schema,
         )
+        print(f"{source_config.name} length: {len(source)}, main length: {len(merged)}")
 
     return merged

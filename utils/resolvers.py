@@ -85,7 +85,7 @@ resolver = {
     "genres": merge_genres,
     "developer": pick_first,
     "publisher": pick_first,
-    "players": "max",
+    "players": pick_first,
     "cooperative": any_truthy,
     "rating": "max",
     "user_rating": "max",
