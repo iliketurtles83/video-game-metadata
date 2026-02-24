@@ -17,95 +17,62 @@ gamelist_mapping = {
     "publisher": "publisher",
     "genre": "genres",
     "players": "players",
-    "rating": "user_rating",
+    "rating": "user_rating"
 }
 
 
-def load_platform_mappings(systems_file: str = "lists/systems.txt") -> dict[str, str]:
+def load_platform_mappings(mappings_file: str = "utils/platform_mappings.json") -> dict[str, str]:
     """
-    Load platform directory name to canonical platform name mappings.
+    Load platform directory-to-name mappings from JSON.
     
     Args:
-        systems_file: Path to systems.txt file with format "dirname: Platform Name"
+        mappings_file: Path to platform_mappings.json file with format {"dirname": "Platform Name"}
     
     Returns:
         Dict mapping directory names to canonical platform names
     """
-    mappings = {}
-    systems_path = Path(systems_file)
-    
-    if not systems_path.exists():
-        return mappings
-    
-    with open(systems_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if not line or ':' not in line:
-                continue
-            dirname, platform_name = line.split(':', 1)
-            mappings[dirname.strip()] = platform_name.strip()
-    
-    return mappings
+    import json
 
-
-def clean_game_name(name: str) -> str:
-    """
-    Clean game name by removing region codes, version tags, etc.
-    Examples:
-        "Super Mario World (U)" -> "Super Mario World"
-        "Zelda (E) [!]" -> "Zelda"
-    """
-    if not name:
-        return name
-    
-    # Remove region codes: (U), (E), (J), (USA), etc.
-    name = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
-    # Remove tags: [!], [a], [b1], etc.
-    name = re.sub(r'\s*\[[^\]]*\]\s*', ' ', name)
-    # Remove extra whitespace
-    name = ' '.join(name.split())
-    
-    return name.strip()
-
-
-
-def parse_players(players_str: Optional[str]) -> Optional[int]:
-    """
-    Extract maximum players from strings like "1-2", "1-4", "2", etc.
-    """
-    if not players_str:
-        return None
-    
-    players_str = str(players_str).strip()
-    
-    # Handle ranges like "1-2"
-    if '-' in players_str:
-        parts = players_str.split('-')
-        try:
-            return int(parts[-1])
-        except (ValueError, IndexError):
-            pass
-    
-    # Handle single numbers
     try:
-        return int(players_str)
-    except ValueError:
-        pass
-    
-    return None
+        with open(mappings_file, 'r', encoding='utf-8') as f:
+            raw_mappings = json.load(f)
+    except (json.JSONDecodeError, OSError, TypeError):
+        return {}
+
+    if not isinstance(raw_mappings, dict):
+        return {}
+
+    return {
+        str(key).strip().lower(): str(value).strip()
+        for key, value in raw_mappings.items()
+        if value is not None
+    }
+
 
 
 def parse_rating(rating_str: Optional[str]) -> Optional[float]:
     """
-    Convert EmulationStation rating (0-1) to 0-10 scale.
+    Parse rating and normalize to 0-10 scale.
+    Detects if value is already 0-10 or needs conversion from 0-1.
     """
     if not rating_str:
         return None
 
     try:
-        return float(rating_str) * 10
+        value = float(rating_str)
     except (TypeError, ValueError):
         return None
+    
+    # If value is already in 0-10 range, return as-is
+    if value > 1.0:
+        return value
+    
+    # If value is 0-1 range, scale to 0-10
+    if 0.0 <= value <= 1.0:
+        return value * 10
+    
+    # Out of expected range, return as-is
+    return value
 
 
 def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
@@ -140,12 +107,8 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
                 else:
                     value = elem.text.strip()
 
-                if xml_tag == "name" and value:
-                    value = clean_game_name(str(value))
-                elif xml_tag == "path" and value:
+                if xml_tag == "path" and value:
                     value = Path(str(value)).stem
-                elif xml_tag == "players" and value:
-                    value = parse_players(str(value))
                 elif xml_tag == "rating" and value:
                     value = parse_rating(str(value))
 
@@ -163,14 +126,14 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
 
 def load_all_gamelists(
     lists_dir: str = "lists",
-    systems_file: str = "lists/systems.txt",
+    systems_file: str = "utils/platform_mappings.json",
 ) -> pd.DataFrame:
     """
     Load and parse all gamelist.xml files from the lists directory.
     
     Args:
         lists_dir: Directory containing platform subdirectories
-        systems_file: Path to systems.txt platform mappings
+        systems_file: Path to platform_mappings.json file
     
     Returns:
         DataFrame with all game data from gamelist.xml files
@@ -186,13 +149,14 @@ def load_all_gamelists(
         platform_dir = xml_file.parent.name
         
         # Map to canonical platform name
-        platform_name = platform_mappings.get(platform_dir, platform_dir.title())
+        platform_key = platform_dir.strip().lower()
+        platform_name = platform_mappings.get(platform_key, platform_dir)
         
         # Parse the XML file
         games = parse_gamelist_xml(xml_file, platform_name)
         all_games.extend(games)
         
-        print(f"Loaded {len(games)} games from {platform_dir} ({platform_name})")
+        print(f"{len(games)} games from {platform_dir} ({platform_name})")
     
     # Convert to DataFrame
     df = pd.DataFrame(all_games)
