@@ -30,6 +30,12 @@ DEFAULT_COLUMNS = CANONICAL_SCHEMA.keys()
 
 # Key columns for deduplication and merging
 KEY_COLUMNS = ("name", "platform")
+NAME_MATCH_KEY_COLUMN = "_name_match_key"
+
+COMMON_ROMAN_NUMERALS = {
+    "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
+    "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx",
+}
 
 
 SeriesTransform = Callable[[pd.Series], pd.Series]
@@ -75,8 +81,10 @@ def clean_game_name(name: str) -> str:
     
     # Remove region codes: (U), (E), (J), (USA), etc.
     name = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
-    # Remove tags: [!], [a], [b1], etc.
-    name = re.sub(r'\s*\[[^\]]*\]\s*', ' ', name)
+    # Remove ROM tags: [!], [a], [b1], [h1], [T+En], etc.
+    # Only strip very short brackets (max 4 chars) containing ROM hack/version markers to preserve
+    # legitimate titles like [Speer], [Redacted], or [ R.U.M.A ].
+    name = re.sub(r'\s*\[[!a-zA-Z][a-zA-Z0-9+]{0,3}\]\s*', ' ', name)
     # Remove spaces before colons: " :" -> ":"
     name = re.sub(r'\s+:', ':', name)
     # Remove extra whitespace
@@ -85,8 +93,42 @@ def clean_game_name(name: str) -> str:
     # Normalize all-caps names to title case
     if name.isupper() and len(name) > 1:
         name = name.title()
+
+    # Normalize common sequel roman numerals (e.g., Ii -> II)
+    def _roman_replacer(match: re.Match[str]) -> str:
+        token = match.group(0)
+        lowered = token.lower()
+        if lowered in COMMON_ROMAN_NUMERALS:
+            return lowered.upper()
+        return token
+
+    name = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, name)
     
     return name.strip()
+
+
+def build_name_match_key(name: Any) -> Any:
+    """Build a stable key for near-duplicate title matching.
+
+    Keeps the display title untouched while normalizing punctuation/case variants
+    used during deduplication.
+    """
+    if pd.isna(name):
+        return name
+
+    raw = str(name).strip()
+    if raw.lower() in {'', 'n/a', 'na', 'null', 'none'}:
+        return np.nan
+
+    text = clean_game_name(raw).casefold()
+    text = re.sub(r"[‐‑–—-]+", " ", text)
+    text = re.sub(r"[:/]+", " ", text)
+    text = re.sub(r"[’'`]+", "", text)
+    text = re.sub(r"[^\w\s]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return np.nan
+    return text
 
 
 def clean_filename(filename: Any) -> Any:
@@ -126,6 +168,7 @@ def normalize_source(
     df: pd.DataFrame,
     config: SourceConfig,
     target_columns: Sequence[str],
+    key_columns: Sequence[str],
 ) -> pd.DataFrame:
     out = df.copy()
 
@@ -153,18 +196,47 @@ def normalize_source(
 
     # Clean names before key-based validation/merge
     if 'name' in out.columns:
+        original_name = out['name'].copy()
+        original_non_null_mask = original_name.notna()
         out['name'] = out['name'].apply(lambda x: clean_game_name(x) if pd.notna(x) else x)
+        name_missing_mask = out['name'].astype(str).str.strip().str.lower().isin(
+            {'', 'n/a', 'na', 'null', 'none'}
+        )
+        out['name'] = out['name'].where(~name_missing_mask, np.nan)
+        if NAME_MATCH_KEY_COLUMN in key_columns:
+            out[NAME_MATCH_KEY_COLUMN] = out['name'].apply(build_name_match_key)
+            key_missing_from_non_null_mask = original_non_null_mask & out[NAME_MATCH_KEY_COLUMN].isna()
+            key_missing_from_non_null_count = int(key_missing_from_non_null_mask.sum())
+            if key_missing_from_non_null_count > 0:
+                sample_original_names = (
+                    original_name[key_missing_from_non_null_mask]
+                    .dropna()
+                    .astype(str)
+                    .str.strip()
+                    .replace('', np.nan)
+                    .dropna()
+                    .drop_duplicates()
+                    .head(5)
+                    .tolist()
+                )
+                print(
+                    f"Warning: {config.name} produced {key_missing_from_non_null_count} rows with null {NAME_MATCH_KEY_COLUMN} "
+                    "from originally non-null name values. "
+                    f"Sample originals: {sample_original_names}"
+                )
 
     # Normalize filename paths (e.g., './game name.zip' -> 'game name')
     if 'filename' in out.columns:
         out['filename'] = out['filename'].apply(clean_filename)
 
+    required_columns = list(dict.fromkeys([*target_columns, *key_columns]))
+
     # make up missing columns
-    for column in target_columns:
+    for column in required_columns:
         if column not in out.columns:
             out[column] = np.nan
 
-    return out.loc[:, list(target_columns)]
+    return out.loc[:, required_columns]
 
 
 def coerce_to_schema(
@@ -268,7 +340,12 @@ def prepare_source(
     key_columns: Sequence[str],
 ) -> pd.DataFrame:
     frame = load_source(config)
-    normalized = normalize_source(frame, config=config, target_columns=target_columns)
+    normalized = normalize_source(
+        frame,
+        config=config,
+        target_columns=target_columns,
+        key_columns=key_columns,
+    )
     validate_required_columns(normalized, required_columns=key_columns, source_name=config.name)
     validated = validate_key_column_values(normalized, key_columns=key_columns, source_name=config.name)
     return validated
@@ -281,6 +358,7 @@ def run_merge_pipeline(
     key_columns: Sequence[str] = KEY_COLUMNS,
     resolver_map: Optional[Mapping[str, Any]] = None,
     schema: Optional[Mapping[str, str]] = None,
+    use_name_match_key: bool = True,
 ) -> pd.DataFrame:
     """Orchestrate merging of multiple data sources into a canonical schema.
     
@@ -292,6 +370,8 @@ def run_merge_pipeline(
                      Rows with NaN in key columns are automatically dropped.
         resolver_map: Custom aggregation functions per column during merge.
         schema: Type coercion mapping (defaults to CANONICAL_SCHEMA).
+        use_name_match_key: Whether to dedupe by a normalized internal name key
+                    to collapse punctuation/casing variants.
     
     Returns:
         Merged DataFrame with deduplicated rows grouped by key_columns.
@@ -299,11 +379,18 @@ def run_merge_pipeline(
     effective_resolver = resolver_map or default_resolver
     effective_schema = schema or CANONICAL_SCHEMA
     effective_target_columns = target_columns or DEFAULT_COLUMNS
+    effective_key_columns = tuple(key_columns)
+
+    if use_name_match_key and "name" in effective_key_columns:
+        effective_key_columns = tuple(
+            NAME_MATCH_KEY_COLUMN if column == "name" else column
+            for column in effective_key_columns
+        )
 
     merged = prepare_source(
         main_config,
         target_columns=effective_target_columns,
-        key_columns=key_columns,
+        key_columns=effective_key_columns,
     )
     main_length = len(merged)
 
@@ -311,12 +398,12 @@ def run_merge_pipeline(
         source = prepare_source(
             source_config,
             target_columns=effective_target_columns,
-            key_columns=key_columns,
+            key_columns=effective_key_columns,
         )
         merged = merge_into_main(
             merged,
             source,
-            key_columns=key_columns,
+            key_columns=effective_key_columns,
             resolver_map=effective_resolver,
             schema=effective_schema,
         )
@@ -325,5 +412,8 @@ def run_merge_pipeline(
         games_added = merged_length - main_length
         main_length = merged_length
         print(f"{source_config.name} length: {source_length}, main length: {merged_length}, games added: {games_added}")
+
+    if NAME_MATCH_KEY_COLUMN in merged.columns:
+        merged = merged.drop(columns=[NAME_MATCH_KEY_COLUMN])
 
     return merged
