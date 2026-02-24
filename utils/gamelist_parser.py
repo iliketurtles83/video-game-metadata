@@ -8,7 +8,7 @@ from typing import Optional
 import pandas as pd
 import json
 
-gamelist_mapping = {
+GAMELIST_COLUMN_MAP = {
     "name": "name",
     "path": "filename",
     "desc": "summary",
@@ -99,7 +99,7 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
 
             game_data: dict[str, Optional[object]] = {"platform": platform}
 
-            for xml_tag, target_field in gamelist_mapping.items():
+            for xml_tag, target_field in GAMELIST_COLUMN_MAP.items():
                 elem = game.find(xml_tag)
                 if elem is None or elem.text is None:
                     value = None
