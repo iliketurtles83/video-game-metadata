@@ -2,11 +2,11 @@
 Parser for gamelist.xml files from RetroPie/EmulationStation.
 Extracts game metadata from XML files organized by platform.
 """
-import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional
 import pandas as pd
+import json
 
 gamelist_mapping = {
     "name": "name",
@@ -31,7 +31,6 @@ def load_platform_mappings(mappings_file: str = "utils/platform_mappings.json") 
     Returns:
         Dict mapping directory names to canonical platform names
     """
-    import json
 
     try:
         with open(mappings_file, 'r', encoding='utf-8') as f:
