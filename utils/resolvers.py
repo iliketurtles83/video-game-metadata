@@ -47,6 +47,18 @@ def merge_genres(series):
     return ", ".join(sorted(genres)) if genres else np.nan
 
 
+def collect_unique(series):
+    """Collect unique non-null values into a sorted, comma-separated string.
+    Splits delimited strings (comma/semicolon) to deduplicate individual values."""
+    values = set()
+    for value in series.dropna():
+        for part in re.split(r"[;,]", str(value)):
+            cleaned = part.strip()
+            if cleaned:
+                values.add(cleaned)
+    return ", ".join(sorted(values)) if values else np.nan
+
+
 def any_truthy(series):
     truthy = {"true", "yes", "y", "1", "t"}
     falsy = {"false", "no", "n", "0", "f"}
@@ -83,12 +95,19 @@ resolver = {
     "release_date": "max",
     "release_year": "max",
     "genres": merge_genres,
-    "developer": pick_first,
-    "publisher": pick_first,
+    "developer": collect_unique,
+    "publisher": collect_unique,
     "players": pick_first,
     "cooperative": any_truthy,
     "rating": "max",
     "user_rating": "max",
+}
+
+# Resolver dict for collapsing by game name (platforms become a list)
+collapse_resolver = {
+    **resolver,
+    "platform": collect_unique,
+    "filename": collect_unique,
 }
 
 # convenient alias

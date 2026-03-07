@@ -1,3 +1,4 @@
+import ast
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from utils.resolvers import pick_first, resolver as default_resolver
+from utils.resolvers import pick_first, resolver as default_resolver, collapse_resolver as default_collapse_resolver
 
 
 # Canonical schema: defines expected types for all columns
@@ -21,21 +22,31 @@ CANONICAL_SCHEMA = {
     'developer': 'string',
     'publisher': 'string',
     'players': 'string',
-    'cooperative': 'string',
+    'cooperative': 'boolean',
     'rating': 'int64',
     'user_rating': 'float64',
 }
 
-DEFAULT_COLUMNS = CANONICAL_SCHEMA.keys()
+DEFAULT_COLUMNS = tuple(CANONICAL_SCHEMA.keys())
 
 # Key columns for deduplication and merging
 KEY_COLUMNS = ("name", "platform")
 NAME_MATCH_KEY_COLUMN = "_name_match_key"
 
+# Columns that may contain multiple values (lists or delimited strings)
+MULTI_VALUE_COLUMNS = ("platform", "developer", "publisher")
+
 COMMON_ROMAN_NUMERALS = {
     "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
     "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx",
 }
+
+
+def _roman_replacer(match: re.Match[str]) -> str:
+    token = match.group(0)
+    if token.lower() in COMMON_ROMAN_NUMERALS:
+        return token.upper()
+    return token
 
 
 SeriesTransform = Callable[[pd.Series], pd.Series]
@@ -95,13 +106,6 @@ def clean_game_name(name: str) -> str:
         name = name.title()
 
     # Normalize common sequel roman numerals (e.g., Ii -> II)
-    def _roman_replacer(match: re.Match[str]) -> str:
-        token = match.group(0)
-        lowered = token.lower()
-        if lowered in COMMON_ROMAN_NUMERALS:
-            return lowered.upper()
-        return token
-
     name = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, name)
     
     return name.strip()
@@ -146,7 +150,43 @@ def clean_filename(filename: Any) -> Any:
         return filename
 
 
+def _parse_multi_value(value: Any) -> list[str]:
+    """Parse a value that may be a Python list, stringified list, or plain string
+    into a flat list of cleaned strings."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return []
 
+    if isinstance(value, (list, tuple, set)):
+        return [str(v).strip() for v in value if pd.notna(v) and str(v).strip()]
+
+    text = str(value).strip()
+    if not text:
+        return []
+
+    # Handle stringified Python lists: "['a', 'b']"
+    if text.startswith('[') and text.endswith(']'):
+        try:
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, (list, tuple)):
+                return [str(v).strip() for v in parsed if v is not None and str(v).strip()]
+        except (ValueError, SyntaxError):
+            pass
+
+    return [text]
+
+
+def _flatten_multi_value(value: Any) -> Any:
+    """Convert a multi-value field (list, stringified list) to a comma-separated string.
+    Scalar strings pass through unchanged."""
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return np.nan
+
+    # Fast path: plain scalar string (no list syntax)
+    if isinstance(value, str) and not (value.startswith('[') and value.endswith(']')):
+        return value if value.strip() else np.nan
+
+    parsed = _parse_multi_value(value)
+    return ", ".join(parsed) if parsed else np.nan
 
 
 def load_source(config: SourceConfig) -> pd.DataFrame:
@@ -175,6 +215,18 @@ def normalize_source(
     # rename columns according to map if it is provided
     if config.rename_map:
         out = out.rename(columns=dict(config.rename_map))
+
+    # Normalize multi-value columns: explode key columns into rows,
+    # flatten non-key columns to comma-separated strings.
+    for mv_col in MULTI_VALUE_COLUMNS:
+        if mv_col not in out.columns:
+            continue
+        if mv_col in key_columns:
+            out[mv_col] = out[mv_col].apply(_parse_multi_value)
+            out = out.explode(mv_col, ignore_index=True)
+            out[mv_col] = out[mv_col].where(out[mv_col].astype(bool), np.nan)
+        else:
+            out[mv_col] = out[mv_col].apply(_flatten_multi_value)
 
     # rename platform names if mapping is provided
     if config.platform_map and "platform" in out.columns:
@@ -259,6 +311,8 @@ def coerce_to_schema(
                 out[column] = pd.to_numeric(out[column], errors='coerce').astype('Int64')
             elif dtype == 'datetime64[ns]':
                 out[column] = pd.to_datetime(out[column], errors='coerce')
+            elif dtype == 'boolean':
+                out[column] = out[column].astype('boolean')
             elif dtype == 'string':
                 # Standardize missing value placeholders to NaN
                 mask = out[column].astype(str).isin(['', 'N/A', 'null', 'None', 'NA', 'n/a'])
@@ -351,6 +405,45 @@ def prepare_source(
     return validated
 
 
+def collapse_by_name(
+    df: pd.DataFrame,
+    name_column: str = "name",
+    resolver_map: Optional[Mapping[str, Any]] = None,
+) -> pd.DataFrame:
+    """Collapse a per-(name, platform) DataFrame into one row per game.
+
+    Uses the same normalized match key as the merge step so that display-name
+    variants (e.g. differing punctuation across platforms) are still grouped
+    together.  Platforms and filenames are collected into sorted
+    comma-separated strings.  Other columns are resolved using the provided
+    resolver map.
+
+    Args:
+        df: Merged DataFrame with one row per (name, platform).
+        name_column: Column to group by (default: 'name').
+        resolver_map: Aggregation functions per column. Defaults to
+            ``collapse_resolver`` from resolvers.py.
+
+    Returns:
+        DataFrame with one row per unique game name.
+    """
+    effective_resolver = resolver_map or default_collapse_resolver
+
+    out = df.copy()
+    out[NAME_MATCH_KEY_COLUMN] = out[name_column].apply(build_name_match_key)
+
+    agg_map: dict[str, Any] = {}
+    for column in out.columns:
+        if column == NAME_MATCH_KEY_COLUMN:
+            continue
+        agg_map[column] = effective_resolver.get(column, pick_first)
+
+    collapsed = out.groupby(NAME_MATCH_KEY_COLUMN, as_index=False).agg(agg_map)
+    collapsed = collapsed.drop(columns=[NAME_MATCH_KEY_COLUMN])
+    print(f"Collapsed {len(df)} rows -> {len(collapsed)} unique games")
+    return collapsed
+
+
 def run_merge_pipeline(
     main_config: SourceConfig,
     source_configs: Sequence[SourceConfig],
@@ -359,6 +452,8 @@ def run_merge_pipeline(
     resolver_map: Optional[Mapping[str, Any]] = None,
     schema: Optional[Mapping[str, str]] = None,
     use_name_match_key: bool = True,
+    collapse_platforms: bool = False,
+    collapse_resolver_map: Optional[Mapping[str, Any]] = None,
 ) -> pd.DataFrame:
     """Orchestrate merging of multiple data sources into a canonical schema.
     
@@ -372,9 +467,15 @@ def run_merge_pipeline(
         schema: Type coercion mapping (defaults to CANONICAL_SCHEMA).
         use_name_match_key: Whether to dedupe by a normalized internal name key
                     to collapse punctuation/casing variants.
+        collapse_platforms: If True, post-process the merged result to produce
+                    one row per game name with platforms collected into a
+                    comma-separated list. If false, returns one row per (name, platform).
+        collapse_resolver_map: Custom resolver map for the collapse step.
+                    Defaults to ``collapse_resolver`` from resolvers.py.
     
     Returns:
         Merged DataFrame with deduplicated rows grouped by key_columns.
+        If collapse_platforms is True, returns one row per game name.
     """
     effective_resolver = resolver_map or default_resolver
     effective_schema = schema or CANONICAL_SCHEMA
@@ -415,5 +516,12 @@ def run_merge_pipeline(
 
     if NAME_MATCH_KEY_COLUMN in merged.columns:
         merged = merged.drop(columns=[NAME_MATCH_KEY_COLUMN])
+
+    if collapse_platforms:
+        merged = collapse_by_name(
+            merged,
+            name_column="name",
+            resolver_map=collapse_resolver_map,
+        )
 
     return merged
