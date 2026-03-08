@@ -1,4 +1,5 @@
 import ast
+import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -34,7 +35,8 @@ KEY_COLUMNS = ("name", "platform")
 NAME_MATCH_KEY_COLUMN = "_name_match_key"
 
 # Columns that may contain multiple values (lists or delimited strings)
-MULTI_VALUE_COLUMNS = ("platform", "developer", "publisher")
+MULTI_VALUE_COLUMNS = ("platform", "developer", "publisher", "genres")
+MULTI_VALUE_SPLIT_PATTERN = r"[;,/]"
 
 COMMON_ROMAN_NUMERALS = {
     "i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x",
@@ -53,6 +55,21 @@ SeriesTransform = Callable[[pd.Series], pd.Series]
 DataFrameLoader = Callable[[], pd.DataFrame]
 DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
 
+_GLOBAL_PLATFORM_MAP: Optional[dict[str, str]] = None
+
+
+def _load_global_platform_map() -> dict[str, str]:
+    """Load and cache the global platform name mapping from platform_mappings.json."""
+    global _GLOBAL_PLATFORM_MAP
+    if _GLOBAL_PLATFORM_MAP is None:
+        mappings_path = Path(__file__).parent / "platform_mappings.json"
+        try:
+            with open(mappings_path, "r", encoding="utf-8") as f:
+                _GLOBAL_PLATFORM_MAP = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            _GLOBAL_PLATFORM_MAP = {}
+    return _GLOBAL_PLATFORM_MAP
+
 
 @dataclass
 class SourceConfig:
@@ -62,7 +79,6 @@ class SourceConfig:
     platform_map: Mapping[str, str] = field(default_factory=dict)
     constants: Mapping[str, Any] = field(default_factory=dict)
     transforms: Mapping[str, SeriesTransform] = field(default_factory=dict)
-    dropna_subset: Optional[Sequence[str]] = None
     read_csv_kwargs: Mapping[str, Any] = field(default_factory=dict)
     loader: Optional[DataFrameLoader] = None
     post_load: Optional[DataFramePostLoad] = None
@@ -84,6 +100,8 @@ def clean_game_name(name: str) -> str:
     if not name:
         return name
     
+    original_name = name
+
     # Fix mojibake/encoding issues: decode latin-1 encoded as utf-8
     try:
         name = name.encode('latin-1').decode('utf-8')
@@ -108,6 +126,10 @@ def clean_game_name(name: str) -> str:
     # Normalize common sequel roman numerals (e.g., Ii -> II)
     name = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, name)
     
+    # if name became empty after cleaning, print warning and original name for debugging
+    if not name:
+        print(f"Warning: name '{original_name}' cleaned to empty string")
+
     return name.strip()
 
 
@@ -124,13 +146,15 @@ def build_name_match_key(name: Any) -> Any:
     if raw.lower() in {'', 'n/a', 'na', 'null', 'none'}:
         return np.nan
 
-    text = clean_game_name(raw).casefold()
+    # Assumes name is already cleaned by clean_game_name before this call.
+    text = raw.casefold()
     text = re.sub(r"[‐‑–—-]+", " ", text)
     text = re.sub(r"[:/]+", " ", text)
     text = re.sub(r"[’'`]+", "", text)
     text = re.sub(r"[^\w\s]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
+        print(f"Warning: name '{raw}' cleaned to empty match key, returning NaN")
         return np.nan
     return text
 
@@ -157,7 +181,10 @@ def _parse_multi_value(value: Any) -> list[str]:
         return []
 
     if isinstance(value, (list, tuple, set)):
-        return [str(v).strip() for v in value if pd.notna(v) and str(v).strip()]
+        parsed: list[str] = []
+        for item in value:
+            parsed.extend(_parse_multi_value(item))
+        return parsed
 
     text = str(value).strip()
     if not text:
@@ -168,22 +195,21 @@ def _parse_multi_value(value: Any) -> list[str]:
         try:
             parsed = ast.literal_eval(text)
             if isinstance(parsed, (list, tuple)):
-                return [str(v).strip() for v in parsed if v is not None and str(v).strip()]
+                parsed_values: list[str] = []
+                for item in parsed:
+                    parsed_values.extend(_parse_multi_value(item))
+                return parsed_values
         except (ValueError, SyntaxError):
             pass
 
-    return [text]
+    return [" ".join(part.strip().split()) for part in re.split(MULTI_VALUE_SPLIT_PATTERN, text) if part.strip()]
 
 
 def _flatten_multi_value(value: Any) -> Any:
     """Convert a multi-value field (list, stringified list) to a comma-separated string.
-    Scalar strings pass through unchanged."""
+    Scalar strings are parsed for delimiters and normalized."""
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return np.nan
-
-    # Fast path: plain scalar string (no list syntax)
-    if isinstance(value, str) and not (value.startswith('[') and value.endswith(']')):
-        return value if value.strip() else np.nan
 
     parsed = _parse_multi_value(value)
     return ", ".join(parsed) if parsed else np.nan
@@ -228,7 +254,13 @@ def normalize_source(
         else:
             out[mv_col] = out[mv_col].apply(_flatten_multi_value)
 
-    # rename platform names if mapping is provided
+    # Apply global platform name mapping from platform_mappings.json
+    if "platform" in out.columns:
+        global_map = _load_global_platform_map()
+        if global_map:
+            out["platform"] = out["platform"].replace(global_map)
+
+    # Apply per-source platform overrides (if any)
     if config.platform_map and "platform" in out.columns:
         out["platform"] = out["platform"].replace(dict(config.platform_map))
 
@@ -344,19 +376,13 @@ def validate_key_column_values(
     key_columns: Sequence[str],
     source_name: str,
 ) -> pd.DataFrame:
-    """Drop rows with NaN in key columns and validate none remain."""
-    out = df.dropna(subset=list(key_columns))
+    """Drop rows with NaN in key columns and log how many were removed."""
+    key_cols = list(key_columns)
+    out = df.dropna(subset=key_cols)
     
     dropped = len(df) - len(out)
     if dropped > 0:
         print(f"Warning: {source_name} dropped {dropped} rows with NaN in key columns {key_columns}")
-    
-    # Check if all key columns are now populated
-    null_counts = out[list(key_columns)].isnull().sum()
-    if null_counts.sum() > 0:
-        raise ValueError(
-            f"{source_name}: after normalization, key columns still have NaN values: {null_counts[null_counts > 0].to_dict()}"
-        )
     
     return out
 
@@ -512,7 +538,7 @@ def run_merge_pipeline(
         merged_length = len(merged)
         games_added = merged_length - main_length
         main_length = merged_length
-        print(f"{source_config.name} length: {source_length}, main length: {merged_length}, games added: {games_added}")
+        print(f"main size: {merged_length}, {source_config.name} size: {source_length}, new games: {games_added}")
 
     if NAME_MATCH_KEY_COLUMN in merged.columns:
         merged = merged.drop(columns=[NAME_MATCH_KEY_COLUMN])
