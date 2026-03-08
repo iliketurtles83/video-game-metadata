@@ -21,12 +21,12 @@ GAMELIST_COLUMN_MAP = {
 }
 
 
-def load_platform_mappings(mappings_file: str = "utils/platform_mappings.json") -> dict[str, str]:
+def load_platform_mappings(mappings_file: str = "utils/gamelist_folder_mappings.json") -> dict[str, str]:
     """
     Load platform directory-to-name mappings from JSON.
     
     Args:
-        mappings_file: Path to platform_mappings.json file with format {"dirname": "Platform Name"}
+        mappings_file: Path to gamelist_folder_mappings.json file with format {"dirname": "Platform Name"}
     
     Returns:
         Dict mapping directory names to canonical platform names
@@ -123,14 +123,14 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
 
 def load_all_gamelists(
     lists_dir: str = "lists",
-    systems_file: str = "utils/platform_mappings.json",
+    systems_file: str = "utils/gamelist_folder_mappings.json",
 ) -> pd.DataFrame:
     """
     Load and parse all gamelist.xml files from the lists directory.
     
     Args:
         lists_dir: Directory containing platform subdirectories
-        systems_file: Path to platform_mappings.json file
+        systems_file: Path to gamelist_folder_mappings.json file
     
     Returns:
         DataFrame with all game data from gamelist.xml files

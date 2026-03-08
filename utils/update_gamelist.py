@@ -14,7 +14,7 @@ import pandas as pd
 import traceback
 import json
 import re
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 from utils.gamelist_parser import GAMELIST_COLUMN_MAP
 
@@ -23,7 +23,7 @@ from utils.gamelist_parser import GAMELIST_COLUMN_MAP
 # Configuration Constants
 # ============================================================
 
-PLATFORM_MAPPINGS_PATH = 'utils/platform_mappings.json'
+PLATFORM_MAPPINGS_PATH = 'utils/gamelist_folder_mappings.json'
 """Path to JSON file mapping platform directory names to canonical names."""
 
 GAME_FILE_EXTENSIONS = r'\.(zip|nes|sfc|smc|bin|iso|cue|gg|sms)$'
@@ -52,7 +52,7 @@ platform_mappings: Dict[str, str] = {}
 """Platform directory-to-canonical-name mappings, loaded from JSON."""
 
 try:
-    with open(PLATFORM_MAPPINGS_PATH, 'r') as f:
+    with open(PLATFORM_MAPPINGS_PATH, 'r', encoding='utf-8') as f:
         platform_mappings = json.load(f)
 except (FileNotFoundError, json.JSONDecodeError, IOError) as e:
     print(f"Warning: Failed to load platform mappings from {PLATFORM_MAPPINGS_PATH}: {e}")
@@ -78,7 +78,7 @@ def is_missing(value: Any) -> bool:
 
     try:
         return bool(pd.isna(value))
-    except Exception:
+    except (ValueError, TypeError):
         return False
 
 
@@ -239,7 +239,7 @@ def extract_filename_from_path(path: Optional[str]) -> str:
 
     path = str(path)
     # Strip ./ prefix
-    path = path.lstrip('./')
+    path = path.removeprefix('./')
     # Remove extension
     if '.' in path:
         path = path.rsplit('.', 1)[0]
@@ -258,7 +258,7 @@ def build_path_from_filename(filename: Optional[str]) -> Optional[str]:
     if not filename:
         return None
 
-    filename = str(filename).strip().lstrip('./')
+    filename = str(filename).strip().removeprefix('./')
     return f"{PATH_PREFIX}{filename}" if filename else None
 
 
@@ -322,62 +322,77 @@ def match_inventory_to_metadata(
         print(f"Error: Failed to normalize game names for platform '{platform_name}': {e}")
         return []
 
-    
-    # Create lookup for filenames (only for non-null filenames)
+    # Build filename lookup (only if column exists and has non-null values)
+    has_filename_col = 'filename' in platform_games.columns
     filename_lookup = {}
-    for idx, row in platform_games.iterrows():
-        if pd.notna(row['filename']):
+    if has_filename_col:
+        valid_filenames = platform_games.dropna(subset=['filename'])
+        for idx, row in valid_filenames.iterrows():
             filename_key = row['filename'].lower().strip()
             if filename_key not in filename_lookup:
                 filename_lookup[filename_key] = row
-    
+
+    # Pre-build name choices for rapidfuzz.process
+    name_choices = dict(enumerate(platform_games['name_normalized']))
+
     matched = []
     for item in inventory:
         best_match = None
         best_score = 0
         best_row = None
         match_type = None
-        
+
         # Strategy 1: Try exact/fuzzy match on filename
         path_value = item.get('path')
         path_filename = extract_filename_from_path(path_value).lower() if path_value else None
-        
-        # First try exact match on filename
-        if path_filename and path_filename in filename_lookup:
-            best_row = filename_lookup[path_filename]
-            best_match = best_row['name']
-            best_score = 100
-            match_type = 'filename_exact'
-        elif path_filename:
-            # Try fuzzy match on filenames
-            for fname_key, row in filename_lookup.items():
-                score = fuzz.ratio(path_filename, fname_key)
-                if score > best_score:
-                    best_score = score
-                    best_match = row['name']
-                    best_row = row
-                    match_type = 'filename_fuzzy'
-        
+
+        if has_filename_col and path_filename:
+            # First try exact match on filename
+            if path_filename in filename_lookup:
+                best_row = filename_lookup[path_filename]
+                best_match = best_row['name']
+                best_score = 100
+                match_type = 'filename_exact'
+            elif filename_lookup:
+                # Try fuzzy match on filenames using rapidfuzz.process
+                fname_keys = list(filename_lookup.keys())
+                result = process.extractOne(
+                    path_filename, fname_keys, scorer=fuzz.ratio
+                )
+                if result is not None:
+                    fname_match, score, _ = result
+                    if score > best_score:
+                        best_score = score
+                        best_row = filename_lookup[fname_match]
+                        best_match = best_row['name']
+                        match_type = 'filename_fuzzy'
+
         # Strategy 2: Fallback to fuzzy match on normalized names (only if filename match is weak)
         if best_score < threshold:
-            for idx, row in platform_games.iterrows():
-                score = fuzz.ratio(item['name_normalized'], row['name_normalized'])
+            result = process.extractOne(
+                item['name_normalized'],
+                name_choices,
+                scorer=fuzz.ratio,
+            )
+            if result is not None:
+                name_result, score, idx = result
                 if score > best_score:
                     best_score = score
-                    best_match = row['name']
-                    best_row = row
+                    best_row = platform_games.iloc[idx]
+                    best_match = best_row['name']
                     match_type = 'name'
-        
+
+        is_matched = best_score >= threshold
         matched.append({
             'xml_name': item['xml_name'],
             'path': item['path'],
             'game_elem': item['game_elem'],
-            'match_name': best_match if best_score >= threshold else None,
+            'match_name': best_match if is_matched else None,
             'match_confidence': best_score,
-            'metadata': best_row if best_score >= threshold else None,
-            'match_type': match_type,
+            'metadata': best_row if is_matched else None,
+            'match_type': match_type if is_matched else None,
         })
-    
+
     return matched
 
 
@@ -405,7 +420,7 @@ def generate_gamelist_xml(
                       e.g., {'summary': 'desc', 'release_date': 'releasedate', ...}
     
     Raises:
-        ValueError: If output_path parent directory cannot be created
+        IOError: If the output file cannot be written.
     """
     
     output_path = Path(output_path)
@@ -514,6 +529,7 @@ def generate_audit_report(
         'low_confidence_games': low_confidence,
         'no_match_games': no_match,
         'match_rate': matched / total if total > 0 else 0,
+        'threshold': threshold,
     }
 
 
@@ -530,21 +546,16 @@ def print_audit_report(report: Dict[str, Any], platform_name: str) -> None:
     print(f"Total games in gamelist.xml: {report['total_games']}")
     print(f"Matched to metadata: {report['matched']} ({report['match_rate']*100:.1f}%)")
     print(f"Unmatched: {report['unmatched']}")
-    print(f"Low confidence matches (<{LOW_CONFIDENCE_THRESHOLD}): {report['low_confidence_count']}")
-    
-    # Count matches by type
-    filename_exact_count = sum(1 for g in report.get('low_confidence_games', []) if g.get('match_type') == 'filename_exact')
-    filename_fuzzy_count = sum(1 for g in report.get('low_confidence_games', []) if g.get('match_type') == 'filename_fuzzy')
-    name_match_count = sum(1 for g in report.get('low_confidence_games', []) if g.get('match_type') == 'name')
+    print(f"Low confidence matches (<{report.get('threshold', LOW_CONFIDENCE_THRESHOLD)}): {report['low_confidence_count']}")
     
     if report['low_confidence_games']:
-        print(f"\n--- Low Confidence Matches (sample) ---")
+        print("\n--- Low Confidence Matches (sample) ---")
         for item in report['low_confidence_games'][:5]:
             match_type = item.get('match_type', 'unknown')
             print(f"  [{match_type:15}] {item['xml_name'][:40]:40} -> {item['match_name'][:35]:35} ({item['match_confidence']:.0f}%)")
     
     if report['no_match_games']:
-        print(f"\n--- No Match Found (sample) ---")
+        print("\n--- No Match Found (sample) ---")
         for item in report['no_match_games'][:5]:
             print(f"  {item['xml_name']}")
     
@@ -611,7 +622,7 @@ def update_platform_gamelist(
     try:
         # Step 1: Build inventory
         if verbose:
-            print(f"[1/4] Building inventory...")
+            print("[1/4] Building inventory...")
         try:
             inventory = build_inventory_from_gamelist(xml_input)
         except Exception as e:
@@ -620,13 +631,13 @@ def update_platform_gamelist(
             raise
         if verbose:
             if len(inventory) == 0:
-                print(f"      ⚠️  Found 0 games in inventory")
+                print("      ⚠️  Found 0 games in inventory")
             else:
                 print(f"      Found {len(inventory)} games")
         
         # Step 2: Match to metadata
         if verbose:
-            print(f"[2/4] Matching to game_df metadata...")
+            print("[2/4] Matching to game_df metadata...")
         try:
             matched_games = match_inventory_to_metadata(
                 inventory=inventory,
@@ -644,9 +655,9 @@ def update_platform_gamelist(
         
         # Step 3: Generate updated XML
         if verbose:
-            print(f"[3/4] Generating updated gamelist.xml...")
+            print("[3/4] Generating updated gamelist.xml...")
         try:
-            output_file = generate_gamelist_xml(
+            generate_gamelist_xml(
                 matched_games=matched_games,
                 output_path=xml_output
             )
@@ -659,7 +670,7 @@ def update_platform_gamelist(
         
         # Step 4: Audit
         if verbose:
-            print(f"[4/4] Generating audit report...")
+            print("[4/4] Generating audit report...")
         try:
             audit = generate_audit_report(matched_games, threshold=threshold)
         except Exception as e:
@@ -710,16 +721,6 @@ def analyze_matching_breakdown(
         Dict with match type counts: filename_exact, filename_fuzzy, name_match,
         no_match, filename_based_total.
     """
-    """
-    Analyze and print matching strategy breakdown.
-    
-    Args:
-        matched_games: List from match_inventory_to_metadata()
-        audit: Optional audit report dict (used only if provided)
-    
-    Returns:
-        dict with match type counts
-    """
     if not matched_games or len(matched_games) == 0:
         print("No matched games to analyze")
         return {
@@ -736,14 +737,14 @@ def analyze_matching_breakdown(
     no_match = sum(1 for g in matched_games if g.get('match_name') is None)
     
     print(f"\n{'='*60}")
-    print(f"MATCHING STRATEGY BREAKDOWN")
+    print("MATCHING STRATEGY BREAKDOWN")
     print(f"{'='*60}")
-    print(f"\nMatching Type Distribution:")
+    print("\nMatching Type Distribution:")
     print(f"  Filename (exact):     {filename_exact:4d} ({filename_exact/len(matched_games)*100:5.1f}%)")
     print(f"  Filename (fuzzy):     {filename_fuzzy:4d} ({filename_fuzzy/len(matched_games)*100:5.1f}%)")
     print(f"  Name-based:           {name_match:4d} ({name_match/len(matched_games)*100:5.1f}%)")
     print(f"  No match:             {no_match:4d} ({no_match/len(matched_games)*100:5.1f}%)")
-    print(f"                        -----")
+    print("                        -----")
     print(f"  Total:                {len(matched_games):4d}")
     
     filename_based_total = filename_exact + filename_fuzzy
