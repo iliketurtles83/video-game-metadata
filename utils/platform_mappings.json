@@ -1,6 +1,9 @@
 {
     "3DS": "Nintendo 3DS",
+    "4": "Commodore 64",
+    "64": "Dragon 32/64",
     "Amiga": "Commodore Amiga",
+    "128": "Commodore 128",
     "Commodore C64/128/MAXI": "Commodore 64",
     "DOS": "MS-DOS",
     "DS": "Nintendo DS",
@@ -13,8 +16,10 @@
     "Game Boy Color": "Nintendo Game Boy Color",
     "Game & Watch": "Nintendo Game & Watch",
     "GameCube": "Nintendo GameCube",
+    "64DD": "Nintendo 64DD",
     "MSX": "Microsoft MSX",
     "MSX2": "Microsoft MSX2",
+    "4A": "Texas Instruments TI-99",
     "Neo Geo AES": "SNK Neo Geo AES",
     "Neo Geo CD": "SNK Neo Geo CD",
     "Neo Geo MVS": "SNK Neo Geo MVS",
@@ -52,5 +57,8 @@
     "Xbox 360": "Microsoft Xbox 360",
     "Xbox One": "Microsoft Xbox One",
     "Xbox Series X": "Microsoft Xbox Series X",
-    "Xbox Series X|S": "Microsoft Xbox Series X"
+    "Xbox Series X|S": "Microsoft Xbox Series X",
+    "WonderSwan": "Bandai WonderSwan",
+    "WonderSwan Color": "Bandai WonderSwan Color",
+    "ZX Spectrum": "Sinclair ZX Spectrum"
 }

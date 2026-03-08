@@ -154,6 +154,12 @@ def build_name_match_key(name: Any) -> Any:
     text = re.sub(r"[^\w\s]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     if not text:
+        # Preserve a stable key for non-empty originals that normalize to empty
+        # (e.g. symbolic names), rather than dropping them from key validation.
+        fallback = re.sub(r"\s+", " ", raw.casefold()).strip()
+        if fallback:
+            print(f"Info: name '{raw}' cleaned to empty match key, using raw fallback key")
+            return f"raw:{fallback}"
         print(f"Warning: name '{raw}' cleaned to empty match key, returning NaN")
         return np.nan
     return text
