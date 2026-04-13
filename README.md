@@ -1,26 +1,48 @@
-# Video Game Metadata Merge Pipeline
+# Video Game Metadata Pipeline
 
-Tools for merging, cleaning, and enriching video game metadata from multiple sources.
+Merge, clean, analyze, and apply video game metadata across multiple sources and console gamelists.
 
-The project produces a unified dataset that can be used for:
-- Web display and browsing
-- Updating `gamelist.xml` files
-- Data analysis and machine learning workflows
+This project is built for a practical workflow:
+- ingest metadata from CSV and `gamelist.xml`
+- normalize schema and platform names
+- deduplicate and clean records
+- analyze quality and coverage
+- write enriched metadata back into per-platform `gamelist.xml`
 
-## What This Project Does
+## Project Goals
 
-This repository combines metadata from different formats and sources into one canonical table.
+- Build a canonical game metadata table from heterogeneous sources.
+- Keep platform naming consistent across CSV sources and filesystem folders.
+- Preserve existing gamelist structure while updating metadata fields safely.
+- Produce outputs usable for frontend browsing, curation, and downstream analysis.
 
-Typical sources include:
-- ARRM exports (CSV)
-- `gamelist.xml` files from RetroPie/EmulationStation-style setups
-- Public datasets (for example, from Google Dataset Search)
+## Repository Layout
 
-The pipeline normalizes field names, platform names, datatypes, and duplicate records.
+- `csv/`: raw and processed tabular datasets.
+- `lists/<platform>/gamelist.xml`: source gamelists per platform.
+- `lists/<platform>/gamelist_updated.xml`: generated updated gamelists.
+- `utils/`: reusable pipeline modules.
+- `output/`: generated artifacts for testing and exports.
+- `scripts/`: helper shell scripts for export/update flows.
 
-## Canonical Dataset Shape
+## End-to-End Workflow
 
-The merge pipeline targets a consistent schema, including columns such as:
+Run notebooks in this order:
+
+1. `01-game_data_exploration.ipynb`
+	Inspect source quality, field distribution, and platform naming issues.
+2. `02-merge_game_data.ipynb`
+	Merge all configured sources into a unified dataset.
+3. `03-data_cleaning.ipynb`
+	Apply post-merge cleanup and normalization rules.
+4. `04-data_analysis.ipynb`
+	Validate coverage, missingness, duplicates, and output quality.
+5. `05-update-gamelists.ipynb`
+	Apply merged metadata into platform-specific `gamelist.xml` files.
+
+## Canonical Schema (Core Columns)
+
+The merged dataset is normalized around fields like:
 - `name`
 - `platform`
 - `filename`
@@ -35,60 +57,71 @@ The merge pipeline targets a consistent schema, including columns such as:
 - `rating`
 - `user_rating`
 
-Notes:
-- Multi-value fields (for example `developer`, `publisher`, `genres`) are normalized during processing.
-- Platform names are standardized through mapping files so equivalent variants merge cleanly.
+Additional columns may exist depending on source coverage and enrichment rules.
 
-## Platform Mapping Rules
+## Mapping Files and Normalization Rules
 
-Two mapping files are used for different purposes:
+Two mapping files serve different responsibilities:
 
-- `utils/platform_mappings.json`
+### `utils/platform_mappings.json`
 - Used by `utils/merge_pipeline.py`
-- Maps platform name variants (for example `PSP`, `PlayStation Portable`) to canonical names during merge
+- Normalizes platform labels from metadata sources
+- Example: aliases like `PSP` and `PlayStation Portable` resolve to one canonical platform
 
-- `utils/gamelist_folder_mappings.json`
+### `utils/gamelist_folder_mappings.json`
 - Used by `utils/gamelist_parser.py`
-- Maps folder names (for example `psx`, `nes`) to canonical platform names
+- Maps folder keys (for example `psx`, `nes`, `sfc`) to canonical platform names
+- Ensures parsed `lists/<platform>/` data aligns with the merged dataset
 
+## Key Modules
 
-## Main Workflow (Notebooks)
+### `utils/merge_pipeline.py`
+- source loading and schema alignment
+- platform normalization and datatype harmonization
+- deduplication and multi-source merge logic
 
-- `01-game_data_exploration.ipynb`: inspect raw sources
-- `02-merge_game_data.ipynb`: configure sources and run the merge pipeline
-- `03-data_cleaning.ipynb`: additional cleanup and normalization
-- `04-data_analysis.ipynb`: analysis and validation
-- `05-update_gamelists.ipynb`: write merged metadata back to `gamelist.xml`
+### `utils/data_cleaning.py`
+- cleanup helpers for text, null handling, and normalized field formatting
+- post-merge consistency operations used by cleaning notebooks/scripts
 
-## Key Python Modules
+### `utils/gamelist_parser.py`
+- parses `gamelist.xml` into DataFrames
+- tolerates missing tags and normalizes values
+- applies folder-to-platform mapping for merge compatibility
 
-- `utils/merge_pipeline.py`
-- Source normalization and schema alignment
-- Deduplication and source-to-source merging
-- Platform variant normalization via `platform_mappings.json`
+### `utils/update_gamelist.py`
+- writes merged metadata back into gamelist XML entries
+- updates desired metadata fields while preserving sensitive existing tags (for example image/media tags)
 
-- `utils/gamelist_parser.py`
-- Loads and parses `gamelist.xml` into DataFrames
-- Applies folder-to-platform mapping via `gamelist_folder_mappings.json`
-- Handles missing XML fields and basic value normalization
-
-- `utils/update_gamelist.py`
-- Updates `gamelist.xml` with merged metadata
-- Preserves fields that should not be overwritten (for example image-related tags)
+### `utils/gamelist_builder.py`
+- helper logic for constructing/updating gamelist structures from DataFrame outputs
 
 ## Inputs and Outputs
 
-### Inputs
-- Source CSV files in `csv/`
-- Console-specific `gamelist.xml` files in `lists/<platform>/`
+### Primary Inputs
+- source CSV files in `csv/` (for example `launchbox.csv`, `mobygames.csv`, DAT exports)
+- console gamelists in `lists/<platform>/gamelist.xml`
 
-### Outputs
-- Merged/cleaned CSV datasets in `csv/` and `output/`
-- Updated `gamelist_updated.xml` files in each `lists/<platform>/` folder
+### Primary Outputs
+- merged datasets such as `csv/combined.csv`, `csv/all_games.csv`
+- cleaned datasets such as `csv/game_dataset_cleaned.csv`
+- updated gamelists in each `lists/<platform>/gamelist_updated.xml`
 
-## Quick Start
+## Running From Scripts (Optional)
 
-1. Open and run `01-game_data_exploration.ipynb` to inspect source data.
-2. Run `02-merge_game_data.ipynb` to generate the combined dataset.
-3. Run `03-data_cleaning.ipynb` and `04-data_analysis.ipynb` as needed.
-4. Run `05-update_gamelists.ipynb` to apply metadata updates to `gamelist.xml` files.
+If you prefer shell workflows over notebooks, helper scripts are available in `scripts/`:
+- `scripts/cpgamelist.sh`
+- `scripts/export_tables.sh`
+
+Use these after reviewing notebook logic so script execution matches your current mapping and cleaning assumptions.
+
+## Practical Notes
+
+- Keep mapping JSON files up to date before major merges.
+- Re-run analysis after cleaning to catch regressions early.
+- Test gamelist updates on a small platform subset first (for example `output/test_games/`) before full rollout.
+- Track schema changes explicitly when introducing new metadata sources.
+
+## License
+
+See `LICENSE`.

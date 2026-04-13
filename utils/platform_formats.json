@@ -28,7 +28,7 @@
 	"pcenginecd": [".cue", ".chd", ".iso", ".bin"],
 	"ps2": [".iso", ".chd", ".cso", ".gz", ".zip", ".7z"],
 	"psp": [".iso", ".cso", ".pbp", ".zip", ".7z"],
-	"psx": [".cue", ".chd", ".pbp", ".iso", ".bin"],
+	"psx": [".cue", ".chd", ".pbp", ".iso", ".bin", ".chd"],
 	"saturn": [".cue", ".chd", ".iso", ".bin"],
 	"scummvm": [".scummvm"],
 	"segacd": [".cue", ".chd", ".iso", ".bin"],
