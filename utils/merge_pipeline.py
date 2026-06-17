@@ -3,10 +3,11 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+from fuzzywuzzy import fuzz, process
 
 from utils.resolvers import pick_first, resolver as default_resolver, collapse_resolver as default_collapse_resolver
 
@@ -56,6 +57,7 @@ DataFrameLoader = Callable[[], pd.DataFrame]
 DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
 
 _GLOBAL_PLATFORM_MAP: Optional[dict[str, str]] = None
+_PLATFORM_MAPPING_CONSISTENCY_CHECKED = False
 
 
 def _load_global_platform_map() -> dict[str, str]:
@@ -69,6 +71,110 @@ def _load_global_platform_map() -> dict[str, str]:
         except (json.JSONDecodeError, OSError):
             _GLOBAL_PLATFORM_MAP = {}
     return _GLOBAL_PLATFORM_MAP
+
+
+def validate_platform_mapping_consistency() -> dict[str, any]:
+    """Validate consistency between platform_mappings.json and gamelist_folder_mappings.json.
+    
+    Returns:
+        Dictionary with consistency check results and warnings
+    """
+    global _PLATFORM_MAPPING_CONSISTENCY_CHECKED
+    
+    if _PLATFORM_MAPPING_CONSISTENCY_CHECKED:
+        return {}
+    
+    # Load both mapping files
+    platform_mappings_path = Path(__file__).parent / "platform_mappings.json"
+    gamelist_mappings_path = Path(__file__).parent / "gamelist_folder_mappings.json"
+    
+    platform_map = {}
+    gamelist_map = {}
+    
+    try:
+        with open(platform_mappings_path, "r", encoding="utf-8") as f:
+            platform_map = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Warning: Could not load platform_mappings.json: {e}")
+        return {}
+    
+    try:
+        with open(gamelist_mappings_path, "r", encoding="utf-8") as f:
+            gamelist_map = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Warning: Could not load gamelist_folder_mappings.json: {e}")
+        return {}
+    
+    # Check for inconsistencies
+    inconsistencies = []
+    
+    # Find platforms that exist in both files but with different canonical names
+    platform_keys = set(platform_map.keys())
+    gamelist_keys = set(gamelist_map.keys())
+    
+    common_keys = platform_keys.intersection(gamelist_keys)
+    
+    for key in common_keys:
+        platform_value = platform_map[key]
+        gamelist_value = gamelist_map[key]
+        if platform_value != gamelist_value:
+            inconsistencies.append({
+                'key': key,
+                'platform_mapping': platform_value,
+                'gamelist_mapping': gamelist_value,
+                'type': 'inconsistency'
+            })
+    
+    # Check for platforms that exist only in one file
+    only_in_platform = platform_keys - gamelist_keys
+    only_in_gamelist = gamelist_keys - platform_keys
+    
+    for key in only_in_platform:
+        inconsistencies.append({
+            'key': key,
+            'platform_mapping': platform_map[key],
+            'gamelist_mapping': None,
+            'type': 'only_in_platform'
+        })
+        
+    for key in only_in_gamelist:
+        inconsistencies.append({
+            'key': key,
+            'platform_mapping': None,
+            'gamelist_mapping': gamelist_map[key],
+            'type': 'only_in_gamelist'
+        })
+    
+    _PLATFORM_MAPPING_CONSISTENCY_CHECKED = True
+    
+    return {
+        'inconsistencies': inconsistencies,
+        'total_inconsistencies': len(inconsistencies),
+        'only_in_platform': len(only_in_platform),
+        'only_in_gamelist': len(only_in_gamelist)
+    }
+
+
+def print_platform_mapping_consistency_report():
+    """Print a detailed report of platform mapping consistency issues."""
+    report = validate_platform_mapping_consistency()
+    if report and report.get('total_inconsistencies', 0) > 0:
+        print("⚠️  Platform Mapping Inconsistency Report:")
+        print(f"  Found {report['total_inconsistencies']} inconsistencies")
+        print(f"  {report['only_in_platform']} keys only in platform_mappings.json")
+        print(f"  {report['only_in_gamelist']} keys only in gamelist_folder_mappings.json")
+        
+        for inconsistency in report['inconsistencies']:
+            if inconsistency['type'] == 'inconsistency':
+                print(f"    '{inconsistency['key']}': platform='{inconsistency['platform_mapping']}', gamelist='{inconsistency['gamelist_mapping']}'")
+            elif inconsistency['type'] == 'only_in_platform':
+                print(f"    '{inconsistency['key']}': only in platform_mappings.json = '{inconsistency['platform_mapping']}'")
+            elif inconsistency['type'] == 'only_in_gamelist':
+                print(f"    '{inconsistency['key']}': only in gamelist_folder_mappings.json = '{inconsistency['gamelist_mapping']}'")
+    elif report:
+        print("✓ Platform mapping consistency check passed")
+    else:
+        print("⚠️  Could not perform platform mapping consistency check")
 
 
 @dataclass
@@ -108,6 +214,13 @@ def clean_game_name(name: str) -> str:
     except (UnicodeDecodeError, UnicodeEncodeError):
         pass
     
+    # Handle special characters that commonly break name matching
+    # Remove control characters and normalize various hyphens/underscores
+    name = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', name)  # Remove control characters
+    
+    # Replace various hyphens and dashes with standard hyphens
+    name = re.sub(r'[‐‑–—-]+', '-', name)
+    
     # Remove region codes: (U), (E), (J), (USA), etc.
     name = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
     # Remove ROM tags: [!], [a], [b1], [h1], [T+En], etc.
@@ -126,11 +239,14 @@ def clean_game_name(name: str) -> str:
     # Normalize common sequel roman numerals (e.g., Ii -> II)
     name = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, name)
     
-    # if name became empty after cleaning, print warning and original name for debugging
-    if not name:
+    # Handle empty results more gracefully
+    cleaned_name = name.strip()
+    if not cleaned_name:
+        # Log warning with original name for debugging
         print(f"Warning: name '{original_name}' cleaned to empty string")
-
-    return name.strip()
+        return original_name  # Return original to preserve information
+    
+    return cleaned_name
 
 
 def build_name_match_key(name: Any) -> Any:
@@ -146,13 +262,20 @@ def build_name_match_key(name: Any) -> Any:
     if raw.lower() in {'', 'n/a', 'na', 'null', 'none'}:
         return np.nan
 
-    # Assumes name is already cleaned by clean_game_name before this call.
-    text = raw.casefold()
-    text = re.sub(r"[‐‑–—-]+", " ", text)
+    # Handle special characters that can break matching
+    # Replace various hyphens with standard spaces
+    text = re.sub(r"[‐‑–—-]+", " ", raw)
+    
+    # Remove control characters that might break matching
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+    
+    # Normalize punctuation and whitespace
     text = re.sub(r"[:/]+", " ", text)
     text = re.sub(r"[’'`]+", "", text)
     text = re.sub(r"[^\w\s]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    
+    # Handle empty results gracefully
     if not text:
         # Preserve a stable key for non-empty originals that normalize to empty
         # (e.g. symbolic names), rather than dropping them from key validation.
@@ -162,7 +285,54 @@ def build_name_match_key(name: Any) -> Any:
             return f"raw:{fallback}"
         print(f"Warning: name '{raw}' cleaned to empty match key, returning NaN")
         return np.nan
+
     return text
+
+
+def fuzzy_name_match_key(name: Any, threshold: int = 85) -> Any:
+    """Build a fuzzy match key for handling titles with minor variations.
+    
+    This function provides a more flexible matching approach for edge cases
+    where exact matching would fail due to minor variations in titles.
+    """
+    if pd.isna(name):
+        return name
+        
+    raw = str(name).strip()
+    if raw.lower() in {'', 'n/a', 'na', 'null', 'none'}:
+        return np.nan
+        
+    # For cases where we want to be more lenient with matching
+    return raw
+
+
+def fuzzy_match_names(name1: str, name2: str, method: str = 'ratio') -> float:
+    """Calculate fuzzy similarity between two names using different methods.
+    
+    Args:
+        name1: First name to compare
+        name2: Second name to compare
+        method: Matching method ('ratio', 'partial_ratio', 'token_sort_ratio', 'token_set_ratio')
+        
+    Returns:
+        Similarity score between 0 and 100
+    """
+    if pd.isna(name1) or pd.isna(name2):
+        return 0.0
+        
+    name1_clean = str(name1).strip()
+    name2_clean = str(name2).strip()
+    
+    if method == 'ratio':
+        return fuzz.ratio(name1_clean, name2_clean)
+    elif method == 'partial_ratio':
+        return fuzz.partial_ratio(name1_clean, name2_clean)
+    elif method == 'token_sort_ratio':
+        return fuzz.token_sort_ratio(name1_clean, name2_clean)
+    elif method == 'token_set_ratio':
+        return fuzz.token_set_ratio(name1_clean, name2_clean)
+    else:
+        return fuzz.ratio(name1_clean, name2_clean)
 
 
 def clean_filename(filename: Any) -> Any:
@@ -180,9 +350,53 @@ def clean_filename(filename: Any) -> Any:
         return filename
 
 
+def get_name_confidence_score(name1: str, name2: str) -> dict:
+    """Calculate various confidence scores for name comparison.
+    
+    Returns:
+        Dictionary with different similarity scores and match confidence
+    """
+    if pd.isna(name1) or pd.isna(name2):
+        return {
+            'exact_match': False,
+            'ratio': 0.0,
+            'partial_ratio': 0.0,
+            'token_sort_ratio': 0.0,
+            'token_set_ratio': 0.0,
+            'confidence': 0.0
+        }
+        
+    name1_clean = str(name1).strip()
+    name2_clean = str(name2).strip()
+    
+    ratio = fuzz.ratio(name1_clean, name2_clean)
+    partial_ratio = fuzz.partial_ratio(name1_clean, name2_clean)
+    token_sort_ratio = fuzz.token_sort_ratio(name1_clean, name2_clean)
+    token_set_ratio = fuzz.token_set_ratio(name1_clean, name2_clean)
+    
+    # Calculate overall confidence (weighted average)
+    confidence = (ratio * 0.3 + partial_ratio * 0.2 + token_sort_ratio * 0.25 + token_set_ratio * 0.25) / 100
+    
+    return {
+        'exact_match': name1_clean == name2_clean,
+        'ratio': ratio,
+        'partial_ratio': partial_ratio,
+        'token_sort_ratio': token_sort_ratio,
+        'token_set_ratio': token_set_ratio,
+        'confidence': confidence
+    }
+
+
 def _parse_multi_value(value: Any) -> list[str]:
     """Parse a value that may be a Python list, stringified list, or plain string
-    into a flat list of cleaned strings."""
+    into a flat list of cleaned strings.
+    
+    Args:
+        value: Value to parse
+        
+    Returns:
+        List of cleaned strings
+    """
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return []
 
@@ -208,7 +422,20 @@ def _parse_multi_value(value: Any) -> list[str]:
         except (ValueError, SyntaxError):
             pass
 
-    return [" ".join(part.strip().split()) for part in re.split(MULTI_VALUE_SPLIT_PATTERN, text) if part.strip()]
+    # Handle special cases with unusual characters that might break parsing
+    # Replace common problematic characters that could break the regex split
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)  # Remove control characters
+    
+    # Use more robust splitting
+    parts = re.split(MULTI_VALUE_SPLIT_PATTERN, text)
+    # Clean each part and filter out empty strings
+    cleaned_parts = [" ".join(part.strip().split()) for part in parts if part.strip()]
+    
+    # If we get empty result, return the original text as fallback
+    if not cleaned_parts and text:
+        return [text]
+        
+    return cleaned_parts
 
 
 def _flatten_multi_value(value: Any) -> Any:
@@ -217,8 +444,31 @@ def _flatten_multi_value(value: Any) -> Any:
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return np.nan
 
-    parsed = _parse_multi_value(value)
-    return ", ".join(parsed) if parsed else np.nan
+    try:
+        parsed = _parse_multi_value(value)
+        return ", ".join(parsed) if parsed else np.nan
+    except Exception as e:
+        # Log error and return original value for debugging
+        print(f"Warning: Error flattening multi-value field: {e}")
+        return value if value is not None else np.nan
+
+
+def is_potentially_similar_name(name1: str, name2: str, threshold: float = 0.8) -> bool:
+    """Determine if two names are potentially similar based on multiple similarity metrics.
+    
+    Args:
+        name1: First name to compare
+        name2: Second name to compare
+        threshold: Minimum confidence threshold for considering names similar
+        
+    Returns:
+        True if names are considered potentially similar, False otherwise
+    """
+    if pd.isna(name1) or pd.isna(name2):
+        return False
+        
+    scores = get_name_confidence_score(name1, name2)
+    return scores['confidence'] >= threshold
 
 
 def load_source(config: SourceConfig) -> pd.DataFrame:
@@ -264,6 +514,11 @@ def normalize_source(
     if "platform" in out.columns:
         global_map = _load_global_platform_map()
         if global_map:
+            # Check for consistency issues before applying mapping
+            consistency_report = validate_platform_mapping_consistency()
+            if consistency_report and consistency_report.get('total_inconsistencies', 0) > 0:
+                print_platform_mapping_consistency_report()
+            
             out["platform"] = out["platform"].replace(global_map)
 
     # Apply per-source platform overrides (if any)
@@ -327,6 +582,16 @@ def normalize_source(
             out[column] = np.nan
 
     return out.loc[:, required_columns]
+
+
+def get_platform_mappings_summary() -> dict:
+    """Get a summary of the current platform mappings for debugging."""
+    platform_map = _load_global_platform_map()
+    return {
+        'total_mappings': len(platform_map),
+        'sample_mappings': dict(list(platform_map.items())[:10]) if platform_map else {},
+        'consistency_check': validate_platform_mapping_consistency()
+    }
 
 
 def coerce_to_schema(
@@ -399,25 +664,45 @@ def merge_into_main(
     key_columns: Sequence[str],
     resolver_map: Mapping[str, Any],
     schema: Optional[Mapping[str, str]] = None,
+    duplicate_detection_threshold: float = 0.8,
 ) -> pd.DataFrame:
-    # Ensure both dataframes have the same columns in the same order before concat
-    all_columns = main_df.columns.tolist()
-    source_df = source_df.reindex(columns=all_columns)
+    """Merge source_df into main_df with enhanced error handling and deduplication.
     
-    # Coerce to schema dtypes before concat to avoid FutureWarning
-    if schema is not None:
-        main_df = coerce_to_schema(main_df, schema)
-        source_df = coerce_to_schema(source_df, schema)
-    
-    stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
+    Args:
+        main_df: Main DataFrame to merge into.
+        source_df: Source DataFrame to merge.
+        key_columns: Columns to use for matching.
+        resolver_map: Custom resolver functions per column.
+        schema: Schema to apply to merged result.
+        duplicate_detection_threshold: Threshold for fuzzy duplicate detection.
 
-    agg_map: dict[str, Any] = {}
-    for column in stacked.columns:
-        if column in key_columns:
-            continue
-        agg_map[column] = resolver_map.get(column, pick_first)
+    Returns:
+        Merged DataFrame with source data integrated.
+    """
+    try:
+        # Ensure both dataframes have the same columns in the same order before concat
+        all_columns = main_df.columns.tolist()
+        source_df = source_df.reindex(columns=all_columns)
+        
+        # Coerce to schema dtypes before concat to avoid FutureWarning
+        if schema is not None:
+            main_df = coerce_to_schema(main_df, schema)
+            source_df = coerce_to_schema(source_df, schema)
+        
+        stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
 
-    return stacked.groupby(list(key_columns), as_index=False).agg(agg_map)
+        agg_map: dict[str, Any] = {}
+        for column in stacked.columns:
+            if column in key_columns:
+                continue
+            agg_map[column] = resolver_map.get(column, pick_first)
+
+        resolved = stacked.groupby(list(key_columns), as_index=False).agg(agg_map)
+        return resolved
+    except Exception as e:
+        print(f"Warning: Error in merge_into_main: {e}")
+        print("Returning main_df to preserve data")
+        return main_df.copy()
 
 
 def prepare_source(
@@ -437,10 +722,47 @@ def prepare_source(
     return validated
 
 
+def identify_potential_duplicates(df: pd.DataFrame, name_column: str = "name", 
+                                 threshold: float = 0.8) -> list:
+    """Identify potentially duplicate entries in a DataFrame based on name similarity.
+    
+    Args:
+        df: DataFrame to analyze
+        name_column: Name of the column to compare (default: 'name')
+        threshold: Similarity threshold for considering duplicates (default: 0.8)
+        
+    Returns:
+        List of tuples containing (index1, index2, similarity_score) for potential duplicates
+    """
+    potential_duplicates = []
+    
+    # Create a copy without the name_match_key column to avoid interference
+    df_copy = df.copy()
+    
+    # Check each row against others
+    for i in range(len(df_copy)):
+        name1 = df_copy.iloc[i][name_column]
+        if pd.isna(name1):
+            continue
+            
+        for j in range(i + 1, len(df_copy)):
+            name2 = df_copy.iloc[j][name_column]
+            if pd.isna(name2):
+                continue
+                
+            # Use our improved matching logic
+            if is_potentially_similar_name(name1, name2, threshold):
+                scores = get_name_confidence_score(name1, name2)
+                potential_duplicates.append((i, j, scores['confidence']))
+    
+    return potential_duplicates
+
+
 def collapse_by_name(
     df: pd.DataFrame,
     name_column: str = "name",
     resolver_map: Optional[Mapping[str, Any]] = None,
+    source_priority: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     """Collapse a per-(name, platform) DataFrame into one row per game.
 
@@ -455,6 +777,7 @@ def collapse_by_name(
         name_column: Column to group by (default: 'name').
         resolver_map: Aggregation functions per column. Defaults to
             ``collapse_resolver`` from resolvers.py.
+        source_priority: Optional list of source names ordered by priority for conflict resolution.
 
     Returns:
         DataFrame with one row per unique game name.
@@ -468,7 +791,11 @@ def collapse_by_name(
     for column in out.columns:
         if column == NAME_MATCH_KEY_COLUMN:
             continue
-        agg_map[column] = effective_resolver.get(column, pick_first)
+        # Use enhanced resolver if we have source priority
+        if source_priority and column in ["genres", "developer", "publisher", "platform"]:
+            agg_map[column] = lambda x: collect_unique_ordered(x, source_priority)
+        else:
+            agg_map[column] = effective_resolver.get(column, pick_first)
 
     collapsed = out.groupby(NAME_MATCH_KEY_COLUMN, as_index=False).agg(agg_map)
     collapsed = collapsed.drop(columns=[NAME_MATCH_KEY_COLUMN])
@@ -486,6 +813,7 @@ def run_merge_pipeline(
     use_name_match_key: bool = True,
     collapse_platforms: bool = False,
     collapse_resolver_map: Optional[Mapping[str, Any]] = None,
+    duplicate_detection_threshold: float = 0.8,
 ) -> pd.DataFrame:
     """Orchestrate merging of multiple data sources into a canonical schema.
     
@@ -494,7 +822,7 @@ def run_merge_pipeline(
         source_configs: List of additional sources to merge into main.
         target_columns: Columns to include in output (defaults to CANONICAL_SCHEMA).
         key_columns: Columns for grouping/dedup (defaults to ('name', 'platform')).
-                     Rows with NaN in key columns are automatically dropped.
+                      Rows with NaN in key columns are automatically dropped.
         resolver_map: Custom aggregation functions per column during merge.
         schema: Type coercion mapping (defaults to CANONICAL_SCHEMA).
         use_name_match_key: Whether to dedupe by a normalized internal name key
@@ -504,6 +832,7 @@ def run_merge_pipeline(
                     comma-separated list. If false, returns one row per (name, platform).
         collapse_resolver_map: Custom resolver map for the collapse step.
                     Defaults to ``collapse_resolver`` from resolvers.py.
+        duplicate_detection_threshold: Threshold for fuzzy name matching to detect potential duplicates.
     
     Returns:
         Merged DataFrame with deduplicated rows grouped by key_columns.
