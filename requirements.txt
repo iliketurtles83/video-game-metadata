@@ -1,0 +1,13 @@
+# Core data processing
+pandas
+numpy
+
+# Fuzzy matching
+fuzzywuzzy
+rapidfuzz
+
+# Notebook analysis/visualization
+seaborn
+
+# Testing
+pytest

@@ -7,7 +7,7 @@ from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from fuzzywuzzy import fuzz, process
+from rapidfuzz import fuzz, process
 
 from utils.resolvers import pick_first, resolver as default_resolver, collapse_resolver as default_collapse_resolver
 
