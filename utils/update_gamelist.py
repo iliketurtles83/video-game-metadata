@@ -93,7 +93,7 @@ def update_or_create_element(parent_elem: ET.Element, element_name: str, text: A
     elem = parent_elem.find(element_name)
     if elem is None:
         elem = ET.SubElement(parent_elem, element_name)
-    elem.text = str(text)
+    elem.text = str(text) if text is not None else None
 
 
 def update_gamelist_xml(
@@ -106,7 +106,7 @@ def update_gamelist_xml(
     Args:
         xml_path: Path to input gamelist.xml file.
         updates_by_name: Dict mapping game names to update field dicts.
-                         Example: {'Game Name': {'desc': 'A description', 'rated': '8'}}
+                          Example: {'Game Name': {'desc': 'A description', 'rated': '8'}}
         output_path: Path to write updated gamelist.xml. If None, uses gamelist_test_updated.xml.
 
     Returns:
@@ -126,6 +126,7 @@ def update_gamelist_xml(
     if root.tag != "gameList":
         raise ValueError(f"Unexpected root tag: {root.tag}. Expected 'gameList'.")
 
+    # Ensure case-insensitive matching by pre-processing all keys to lowercase
     updates_casefold = {name.casefold(): values for name, values in updates_by_name.items()}
 
     updated_games = 0
@@ -135,6 +136,7 @@ def update_gamelist_xml(
             continue
 
         game_name = name_elem.text.strip()
+        # Use casefold for case-insensitive matching
         game_updates = updates_casefold.get(game_name.casefold())
         if not game_updates:
             continue
@@ -332,7 +334,7 @@ def match_inventory_to_metadata(
             if filename_key not in filename_lookup:
                 filename_lookup[filename_key] = row
 
-    # Pre-build name choices for rapidfuzz.process
+    # Pre-build name choices for rapidfuzz.process (ensure case-insensitive)
     name_choices = dict(enumerate(platform_games['name_normalized']))
 
     matched = []
@@ -369,6 +371,7 @@ def match_inventory_to_metadata(
 
         # Strategy 2: Fallback to fuzzy match on normalized names (only if filename match is weak)
         if best_score < threshold:
+            # Ensure case-insensitive comparison for name matching
             result = process.extractOne(
                 item['name_normalized'],
                 name_choices,
@@ -434,6 +437,9 @@ def generate_gamelist_xml(
     
     root = ET.Element("gameList")
     
+    # Track unmapped columns for logging
+    unmapped_columns = set()
+    
     for item in matched_games:
         # Use original game element as base (preserves unmapped fields)
         original_game_elem = item.get('game_elem')
@@ -475,12 +481,28 @@ def generate_gamelist_xml(
                     value = metadata[df_column]
                     if not is_missing(value):
                         update_or_create_element(game_elem, xml_tag, value)
+                else:
+                    # Track unmapped columns for logging
+                    unmapped_columns.add(df_column)
+    
+    # Log unmapped columns if any
+    if unmapped_columns:
+        print(f"Warning: The following DataFrame columns are not mapped to XML tags: {sorted(unmapped_columns)}")
+    
+    return str(output_path)
     
     # Write with pretty formatting
     try:
         tree = ET.ElementTree(root)
         ET.indent(tree, space="  ", level=0)
         tree.write(output_path, encoding="utf-8", xml_declaration=True)
+        
+        # Validate XML by parsing it back
+        try:
+            ET.parse(output_path)
+        except ET.ParseError as e:
+            print(f"Warning: Generated XML is not well-formed: {e}")
+            raise
     except IOError as e:
         print(f"Error: Failed to write gamelist to {output_path}: {e}")
         raise
