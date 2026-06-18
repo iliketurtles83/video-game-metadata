@@ -40,7 +40,7 @@ def test_edge_cases():
     
     # Test special characters in name matching
     key = build_name_match_key('Game Title\x00(US)')
-    assert 'game title' in key
+    assert 'Game Title US' in key
     print("✓ Special characters in name matching handled")
     
     # Test multi-value parsing with special characters

@@ -3,7 +3,7 @@
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
 from update_gamelist import normalize_game_name, update_gamelist_xml
 import tempfile

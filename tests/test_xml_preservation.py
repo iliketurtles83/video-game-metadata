@@ -8,7 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 # Add the utils directory to the path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'utils'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'utils'))
 
 from update_gamelist import generate_gamelist_xml, build_inventory_from_gamelist
 import pandas as pd
