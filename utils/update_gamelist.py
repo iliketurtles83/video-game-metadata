@@ -12,7 +12,6 @@ import xml.etree.ElementTree as ET
 import time
 
 import pandas as pd
-import traceback
 import json
 import re
 from rapidfuzz import fuzz, process

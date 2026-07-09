@@ -1,7 +1,7 @@
 # rewritten column_join priority functions as resolver functions
 import re
 import numpy as np
-from typing import Any, List, Optional, Union
+from typing import List, Optional
 
 def _clean_strings(series):
     values = []
@@ -181,31 +181,6 @@ def _resolve_by_source_priority(series, source_priority: List[str]):
     
     return values[0] if values else np.nan
 
-
-# --- Resolver Dictionary ---
-resolver = {
-    "filename": pick_first,
-    "summary": pick_longer,
-    "release_date": "max",
-    "release_year": "max",
-    "genres": collect_unique,
-    "developer": collect_unique,
-    "publisher": collect_unique,
-    "players": pick_first,
-    "cooperative": any_truthy,
-    "rating": "max",
-    "user_rating": "max",
-}
-
-# Resolver dict for collapsing by game name (platforms become a list)
-collapse_resolver = {
-    **resolver,
-    "platform": collect_unique,
-    "filename": collect_unique,
-}
-
-# convenient alias
-resolvers = resolver
 
 # --- Resolver Dictionary ---
 resolver = {
