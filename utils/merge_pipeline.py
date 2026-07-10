@@ -8,10 +8,16 @@ from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from rapidfuzz import fuzz
+from rapidfuzz import fuzz, process
 
 from utils.resolvers import pick_first, resolver as default_resolver, collapse_resolver as default_collapse_resolver
 
+
+# Known region/edition tags to strip from game titles
+_REGION_TAGS = (
+    r'(?:USA|World|JAPAN|Europe|Japan|Asia|Japan,\s*USA|Asia,\s*USA|'
+    r'REVERSED|Unl|PAL|NTSC|NTSC-J|NTSC-U|NTSC-K)'
+)
 
 # Canonical schema: defines expected types for all columns
 CANONICAL_SCHEMA = {
@@ -72,6 +78,63 @@ def _load_global_platform_map() -> dict[str, str]:
         except (json.JSONDecodeError, OSError):
             _GLOBAL_PLATFORM_MAP = {}
     return _GLOBAL_PLATFORM_MAP
+
+
+_GLOBAL_GAMELIST_MAP: Optional[dict[str, str]] = None
+
+
+def _load_global_gamelist_map() -> dict[str, str]:
+    """Load and cache the gamelist folder name mapping from gamelist_folder_mappings.json."""
+    global _GLOBAL_GAMELIST_MAP
+    if _GLOBAL_GAMELIST_MAP is None:
+        mappings_path = Path(__file__).parent / "gamelist_folder_mappings.json"
+        try:
+            with open(mappings_path, "r", encoding="utf-8") as f:
+                _GLOBAL_GAMELIST_MAP = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            _GLOBAL_GAMELIST_MAP = {}
+    return _GLOBAL_GAMELIST_MAP
+
+
+def normalize_platform(platform_name: str) -> str:
+    """Normalize a platform name using exact match with fallback to fuzzy matching.
+    
+    Args:
+        platform_name: Raw platform name to normalize.
+    Returns:
+        Canonical platform name if matched, otherwise the original name.
+    """
+    if not platform_name or not isinstance(platform_name, str):
+        return platform_name
+    
+    stripped = platform_name.strip()
+    if not stripped:
+        return platform_name
+    
+    # Try exact match in both mapping files
+    global_map = _load_global_platform_map()
+    if stripped in global_map:
+        return global_map[stripped]
+    
+    gamelist_map = _load_global_gamelist_map()
+    if stripped in gamelist_map:
+        return gamelist_map[stripped]
+    
+    # Fuzzy matching fallback
+    all_keys = list(global_map.keys()) + list(gamelist_map.keys())
+    best_match = process.extractOne(
+        stripped,
+        all_keys,
+        scorer=fuzz.token_set_ratio,
+        score_cutoff=85,
+    )
+    if best_match:
+        matched_key, score, _ = best_match
+        canonical = global_map.get(matched_key) or gamelist_map.get(matched_key)
+        if canonical:
+            return canonical
+    
+    return platform_name
 
 
 def validate_platform_mapping_consistency() -> dict[str, any]:
@@ -222,8 +285,8 @@ def clean_game_name(name: str) -> str:
     # Replace various hyphens and dashes with standard hyphens
     name = re.sub(r'[‐‑–—-]+', '-', name)
     
-    # Remove region codes: (U), (E), (J), (USA), etc.
-    name = re.sub(r'\s*\([^)]*\)\s*', ' ', name)
+    # Remove known region/edition tags in parentheses
+    name = re.sub(rf'\s*\({_REGION_TAGS}\)\s*', ' ', name, flags=re.IGNORECASE)
     # Remove ROM tags: [!], [a], [b1], [h1], [T+En], etc.
     # Only strip very short brackets (max 4 chars) containing ROM hack/version markers to preserve
     # legitimate titles like [Speer], [Redacted], or [ R.U.M.A ].
@@ -616,7 +679,7 @@ def normalize_source(
             if consistency_report and consistency_report.get('total_inconsistencies', 0) > 0:
                 print_platform_mapping_consistency_report()
             
-            out["platform"] = out["platform"].replace(global_map)
+            out["platform"] = out["platform"].apply(normalize_platform)
 
     # Apply per-source platform overrides (if any)
     if config.platform_map and "platform" in out.columns:

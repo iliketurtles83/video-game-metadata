@@ -182,19 +182,81 @@ def _resolve_by_source_priority(series, source_priority: List[str]):
     return values[0] if values else np.nan
 
 
+def weighted_avg(series):
+    """Compute the arithmetic mean of non-null numeric values.
+    
+    Args:
+        series: Series of numeric values.
+    Returns:
+        Arithmetic mean rounded to 1 decimal, or the single value if only one exists.
+    """
+    values = series.dropna()
+    if len(values) == 0:
+        return np.nan
+    if len(values) == 1:
+        return float(values.iloc[0])
+    return round(float(values.mean()), 1)
+
+
+def prefer_specific(series, priority_order: Optional[List[str]] = None):
+    """Select the most specific non-null value from a series.
+    
+    Iterates values in priority order (if provided), counts comma-separated parts,
+    and selects the value with the most parts (most specific). If tied, prefers
+    the first encountered (highest priority source).
+    
+    Args:
+        series: Series of values to process.
+        priority_order: Optional list of source names ordered by priority.
+    Returns:
+        The most specific value, or np.nan if no values exist.
+    """
+    import pandas as pd
+    
+    values = series.dropna().tolist()
+    if not values:
+        return np.nan
+    
+    if priority_order:
+        value_sources = []
+        for val in values:
+            val_str = str(val).strip()
+            if not val_str:
+                continue
+            # Try to determine source from index or context
+            value_sources.append(val_str)
+        values = value_sources
+        if not values:
+            return np.nan
+    
+    def specificity(v):
+        parts = len(re.split(r"[,;]", str(v)))
+        length = len(str(v))
+        return (parts, length)
+    
+    best = values[0]
+    best_spec = specificity(best)
+    for v in values[1:]:
+        spec = specificity(v)
+        if spec > best_spec:
+            best = v
+            best_spec = spec
+    return str(best).strip()
+
+
 # --- Resolver Dictionary ---
 resolver = {
     "filename": pick_first,
     "summary": pick_longer,
-    "release_date": "max",
+    "release_date": "min",
     "release_year": "max",
     "genres": collect_unique,
-    "developer": collect_unique,
-    "publisher": collect_unique,
+    "developer": prefer_specific,
+    "publisher": prefer_specific,
     "players": pick_first,
     "cooperative": any_truthy,
-    "rating": "max",
-    "user_rating": "max",
+    "rating": weighted_avg,
+    "user_rating": weighted_avg,
 }
 
 # Resolver dict for collapsing by game name (platforms become a list)
