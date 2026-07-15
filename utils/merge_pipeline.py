@@ -1,16 +1,17 @@
 import ast
 import json
+import logging
 import re
 import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, List, Mapping, Optional, Sequence
+from typing import Any, Callable, List, Mapping, Optional, Sequence, cast
 
 import numpy as np
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-from utils.resolvers import pick_first, resolver as default_resolver, collapse_resolver as default_collapse_resolver
+from utils.resolvers import pick_first, prefer_specific, collect_unique_ordered, resolver as default_resolver, collapse_resolver as default_collapse_resolver
 
 
 # Known region/edition tags to strip from game titles
@@ -77,7 +78,7 @@ def _load_global_platform_map() -> dict[str, str]:
                 _GLOBAL_PLATFORM_MAP = json.load(f)
         except (json.JSONDecodeError, OSError):
             _GLOBAL_PLATFORM_MAP = {}
-    return _GLOBAL_PLATFORM_MAP
+    return cast(dict[str, str], _GLOBAL_PLATFORM_MAP)
 
 
 _GLOBAL_GAMELIST_MAP: Optional[dict[str, str]] = None
@@ -93,7 +94,7 @@ def _load_global_gamelist_map() -> dict[str, str]:
                 _GLOBAL_GAMELIST_MAP = json.load(f)
         except (json.JSONDecodeError, OSError):
             _GLOBAL_GAMELIST_MAP = {}
-    return _GLOBAL_GAMELIST_MAP
+    return cast(dict[str, str], _GLOBAL_GAMELIST_MAP)
 
 
 def normalize_platform(platform_name: str) -> str:
@@ -120,6 +121,11 @@ def normalize_platform(platform_name: str) -> str:
     if stripped in gamelist_map:
         return gamelist_map[stripped]
     
+    # If already a canonical target, return as-is (skip fuzzy)
+    canonical_targets = set(global_map.values()) | set(gamelist_map.values())
+    if stripped in canonical_targets:
+        return stripped
+    
     # Fuzzy matching fallback
     all_keys = list(global_map.keys()) + list(gamelist_map.keys())
     best_match = process.extractOne(
@@ -132,6 +138,10 @@ def normalize_platform(platform_name: str) -> str:
         matched_key, score, _ = best_match
         canonical = global_map.get(matched_key) or gamelist_map.get(matched_key)
         if canonical:
+            logging.debug(
+                "Fuzzy platform match: '%s' -> '%s' (score=%d)",
+                stripped, canonical, score,
+            )
             return canonical
     
     return platform_name
@@ -771,7 +781,16 @@ def coerce_to_schema(
             if dtype == 'float64':
                 out[column] = pd.to_numeric(out[column], errors='coerce')
             elif dtype == 'int64':
-                out[column] = pd.to_numeric(out[column], errors='coerce').astype('Int64')
+                numeric_values = pd.to_numeric(out[column], errors='coerce')
+                fractional_mask = numeric_values.notna() & ((numeric_values % 1) != 0)
+                if fractional_mask.any():
+                    fractional_count = int(fractional_mask.sum())
+                    print(
+                        f"Warning: {column} has {fractional_count} non-integer values; "
+                        "rounding before Int64 coercion"
+                    )
+                    numeric_values = numeric_values.round()
+                out[column] = numeric_values.astype('Int64')
             elif dtype == 'datetime64[ns]':
                 out[column] = pd.to_datetime(out[column], errors='coerce')
             elif dtype == 'boolean':
@@ -848,8 +867,23 @@ def merge_into_main(
         if schema is not None:
             main_df = coerce_to_schema(main_df, schema)
             source_df = coerce_to_schema(source_df, schema)
-        
-        stacked = pd.concat([main_df, source_df], ignore_index=True, sort=False)
+
+        # Exclude empty/all-NA frames and columns before concat to avoid pandas FutureWarning
+        concat_frames = []
+        for frame in (main_df, source_df):
+            if frame.empty:
+                continue
+
+            non_all_na_columns = frame.columns[frame.notna().any(axis=0)]
+            if len(non_all_na_columns) == 0:
+                continue
+
+            concat_frames.append(frame.loc[:, non_all_na_columns])
+
+        if not concat_frames:
+            return main_df.copy()
+
+        stacked = pd.concat(concat_frames, ignore_index=True, sort=False).reindex(columns=all_columns)
 
         agg_map: dict[str, Any] = {}
         for column in stacked.columns:
@@ -1122,9 +1156,6 @@ def _identify_potential_duplicates_standard(df: pd.DataFrame, name_column: str =
     
     for group in name_groups.values():
         if len(group) > 1:
-            # Use set-based membership testing for faster lookups
-            group_set = set(group)
-            
             # Compare each item in the group with others
             for i in range(len(group)):
                 if comparison_count >= max_comparisons:
@@ -1187,8 +1218,11 @@ def collapse_by_name(
     for column in out.columns:
         if column == NAME_MATCH_KEY_COLUMN:
             continue
-        # Use enhanced resolver if we have source priority
-        if source_priority and column in ["genres", "developer", "publisher", "platform"]:
+        # developer/publisher: pick the most specific value (first encountered on tie)
+        if source_priority and column in ("developer", "publisher"):
+            agg_map[column] = prefer_specific
+        # genres/platform: collect unique values from all sources
+        elif source_priority and column in ("genres", "platform"):
             agg_map[column] = lambda x: collect_unique_ordered(x, source_priority)
         else:
             agg_map[column] = effective_resolver.get(column, pick_first)

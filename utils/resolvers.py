@@ -198,50 +198,37 @@ def weighted_avg(series):
     return round(float(values.mean()), 1)
 
 
-def prefer_specific(series, priority_order: Optional[List[str]] = None):
+def prefer_specific(series):
     """Select the most specific non-null value from a series.
     
-    Iterates values in priority order (if provided), counts comma-separated parts,
-    and selects the value with the most parts (most specific). If tied, prefers
-    the first encountered (highest priority source).
+    Values are expected to already be in priority order (highest priority first)
+    from the DataFrame. Counts comma-separated parts and selects the value with
+    the most parts (most specific). On tie, prefers the first encountered
+    (highest priority source). If one value is a strict substring of another,
+    the longer (refining) value wins.
     
     Args:
         series: Series of values to process.
-        priority_order: Optional list of source names ordered by priority.
     Returns:
         The most specific value, or np.nan if no values exist.
     """
-    import pandas as pd
-    
     values = series.dropna().tolist()
     if not values:
         return np.nan
     
-    if priority_order:
-        value_sources = []
-        for val in values:
-            val_str = str(val).strip()
-            if not val_str:
-                continue
-            # Try to determine source from index or context
-            value_sources.append(val_str)
-        values = value_sources
-        if not values:
-            return np.nan
+    def part_count(v):
+        return len(re.split(r"[,;]", str(v)))
     
-    def specificity(v):
-        parts = len(re.split(r"[,;]", str(v)))
-        length = len(str(v))
-        return (parts, length)
-    
-    best = values[0]
-    best_spec = specificity(best)
-    for v in values[1:]:
-        spec = specificity(v)
-        if spec > best_spec:
-            best = v
-            best_spec = spec
-    return str(best).strip()
+    best = str(values[0]).strip()
+    best_count = part_count(best)
+    for raw in values[1:]:
+        v = str(raw).strip()
+        count = part_count(v)
+        if count > best_count:
+            best, best_count = v, count
+        elif count == best_count and best in v and best != v:
+            best, best_count = v, count
+    return best
 
 
 # --- Resolver Dictionary ---
