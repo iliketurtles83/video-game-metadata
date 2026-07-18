@@ -1,0 +1,825 @@
+{
+  "3DO": {
+    "aliases": [
+      "3do"
+    ]
+  },
+  "AdvanceMAME": {
+    "aliases": [
+      "mame-advmame"
+    ]
+  },
+  "Adventure Game Studio Game Engine": {
+    "aliases": [
+      "ags"
+    ]
+  },
+  "Amstrad CPC": {
+    "aliases": [
+      "amstradcpc"
+    ]
+  },
+  "Amstrad GX4000": {
+    "aliases": [
+      "gx4000"
+    ]
+  },
+  "Apple II": {
+    "aliases": [
+      "apple2"
+    ]
+  },
+  "Apple IIGS": {
+    "aliases": [
+      "apple2gs"
+    ]
+  },
+  "Apple Macintosh": {
+    "aliases": [
+      "macintosh"
+    ]
+  },
+  "Arcade": {
+    "aliases": [
+      "arcade",
+      "fba",
+      "fbneo",
+      "mame"
+    ]
+  },
+  "Atari 2600": {
+    "aliases": [
+      "atari2600"
+    ]
+  },
+  "Atari 5200": {
+    "aliases": [
+      "atari5200"
+    ]
+  },
+  "Atari 7800 ProSystem": {
+    "aliases": [
+      "atari7800"
+    ]
+  },
+  "Atari 800": {
+    "aliases": [
+      "atari800"
+    ]
+  },
+  "Atari Jaguar": {
+    "aliases": [
+      "atarijaguar"
+    ]
+  },
+  "Atari Jaguar CD": {
+    "aliases": [
+      "atarijaguarcd"
+    ]
+  },
+  "Atari Lynx": {
+    "aliases": [
+      "atarilynx"
+    ]
+  },
+  "Atari ST": {
+    "aliases": [
+      "atarist"
+    ]
+  },
+  "Atari XE": {
+    "aliases": [
+      "atarixe"
+    ]
+  },
+  "Atomiswave": {
+    "aliases": [
+      "atomiswave"
+    ]
+  },
+  "BBC Micro": {
+    "aliases": [
+      "bbcmicro"
+    ]
+  },
+  "Bally Astrocade": {
+    "aliases": [
+      "astrocade"
+    ]
+  },
+  "Bandai SuFami Turbo": {
+    "aliases": [
+      "sufami"
+    ]
+  },
+  "Bandai WonderSwan": {
+    "aliases": [
+      "WonderSwan",
+      "wonderswan"
+    ]
+  },
+  "Bandai WonderSwan Color": {
+    "aliases": [
+      "WonderSwan Color",
+      "wonderswancolor"
+    ]
+  },
+  "Cave Story (NXEngine)": {
+    "aliases": [
+      "cavestory"
+    ]
+  },
+  "ChaiLove Game Engine": {
+    "aliases": [
+      "chailove"
+    ]
+  },
+  "ColecoVision": {
+    "aliases": [
+      "coleco"
+    ]
+  },
+  "Commodore 128": {
+    "aliases": [
+      "128"
+    ]
+  },
+  "Commodore 64": {
+    "aliases": [
+      "4",
+      "Commodore C64/128/MAXI",
+      "c64"
+    ]
+  },
+  "Commodore Amiga": {
+    "aliases": [
+      "Amiga",
+      "amiga"
+    ]
+  },
+  "Commodore Amiga 1200": {
+    "aliases": [
+      "amiga1200"
+    ]
+  },
+  "Commodore Amiga 600": {
+    "aliases": [
+      "amiga600"
+    ]
+  },
+  "Commodore Amiga CD32": {
+    "aliases": [
+      "amigacd32"
+    ]
+  },
+  "Commodore CDTV": {
+    "aliases": [
+      "cdtv"
+    ]
+  },
+  "Commodore VIC-20": {
+    "aliases": [
+      "vic20"
+    ]
+  },
+  "Daphne Arcade LaserDisc Emulator": {
+    "aliases": [
+      "daphne"
+    ]
+  },
+  "Desktop Applications": {
+    "aliases": [
+      "desktop"
+    ]
+  },
+  "Dragon 32": {
+    "aliases": [
+      "dragon32"
+    ]
+  },
+  "Dragon 32/64": {
+    "aliases": [
+      "64"
+    ]
+  },
+  "Epic Games Store": {
+    "aliases": [
+      "epic"
+    ]
+  },
+  "Fairchild Channel F": {
+    "aliases": [
+      "channelf"
+    ]
+  },
+  "Google Android": {
+    "aliases": [
+      "android"
+    ]
+  },
+  "Google Stadia": {
+    "aliases": [
+      "Stadia"
+    ]
+  },
+  "Infocom Z-machine": {
+    "aliases": [
+      "zmachine"
+    ]
+  },
+  "Java 2 Micro Edition (J2ME)": {
+    "aliases": [
+      "j2me"
+    ]
+  },
+  "Lutris Open Gaming Platform": {
+    "aliases": [
+      "lutris"
+    ]
+  },
+  "Lutro Game Engine": {
+    "aliases": [
+      "lutro"
+    ]
+  },
+  "MAME4ALL": {
+    "aliases": [
+      "mame-mame4all"
+    ]
+  },
+  "MS-DOS": {
+    "aliases": [
+      "DOS",
+      "doom",
+      "dos",
+      "pc"
+    ]
+  },
+  "MSX Turbo R": {
+    "aliases": [
+      "msxturbor"
+    ]
+  },
+  "Magnavox Odyssey2": {
+    "aliases": [
+      "odyssey2"
+    ]
+  },
+  "Mattel Electronics Intellivision": {
+    "aliases": [
+      "intellivision"
+    ]
+  },
+  "Microsoft MSX": {
+    "aliases": [
+      "MSX",
+      "msx",
+      "msx1"
+    ]
+  },
+  "Microsoft MSX2": {
+    "aliases": [
+      "MSX2",
+      "msx2"
+    ]
+  },
+  "Microsoft Xbox": {
+    "aliases": [
+      "Xbox",
+      "xbox"
+    ]
+  },
+  "Microsoft Xbox 360": {
+    "aliases": [
+      "Xbox 360",
+      "xbox360"
+    ]
+  },
+  "Microsoft Xbox One": {
+    "aliases": [
+      "Xbox One"
+    ]
+  },
+  "Microsoft Xbox Series S": {
+    "aliases": [
+      "Xbox Series S"
+    ]
+  },
+  "Microsoft Xbox Series X": {
+    "aliases": [
+      "Xbox Series X",
+      "Xbox Series X|S"
+    ]
+  },
+  "Moonlight Game Streaming": {
+    "aliases": [
+      "moonlight"
+    ]
+  },
+  "Multi Emulator Super System": {
+    "aliases": [
+      "mess"
+    ]
+  },
+  "NEC PC Engine": {
+    "aliases": [
+      "pcengine"
+    ]
+  },
+  "NEC PC Engine CD": {
+    "aliases": [
+      "pcenginecd"
+    ]
+  },
+  "NEC PC-8800 Series": {
+    "aliases": [
+      "pc88"
+    ]
+  },
+  "NEC PC-9800 Series": {
+    "aliases": [
+      "pc98"
+    ]
+  },
+  "NEC PC-FX": {
+    "aliases": [
+      "pcfx"
+    ]
+  },
+  "NEC SuperGrafx": {
+    "aliases": [
+      "supergrafx"
+    ]
+  },
+  "NEC TurboGrafx-16": {
+    "aliases": [
+      "TurboGrafx-16",
+      "Turbografx-16",
+      "tg16"
+    ]
+  },
+  "NEC TurboGrafx-CD": {
+    "aliases": [
+      "tg-cd"
+    ]
+  },
+  "Nintendo 3DS": {
+    "aliases": [
+      "3DS",
+      "New Nintendo 3DS",
+      "n3ds"
+    ]
+  },
+  "Nintendo 64": {
+    "aliases": [
+      "N64",
+      "n64"
+    ]
+  },
+  "Nintendo 64DD": {
+    "aliases": [
+      "64DD",
+      "64dd"
+    ]
+  },
+  "Nintendo DS": {
+    "aliases": [
+      "DS",
+      "nds"
+    ]
+  },
+  "Nintendo Entertainment System": {
+    "aliases": [
+      "Family Computer",
+      "Family Computer Disk System",
+      "NES",
+      "Nintendo Famicom Disk System",
+      "famicom",
+      "nes"
+    ]
+  },
+  "Nintendo Famicom Disk System": {
+    "aliases": [
+      "fds"
+    ]
+  },
+  "Nintendo Game & Watch": {
+    "aliases": [
+      "Game & Watch",
+      "gameandwatch"
+    ]
+  },
+  "Nintendo Game Boy": {
+    "aliases": [
+      "GB",
+      "Game Boy",
+      "Gb",
+      "gb"
+    ]
+  },
+  "Nintendo Game Boy Advance": {
+    "aliases": [
+      "GBA",
+      "Game Boy Advance",
+      "Gba",
+      "gba"
+    ]
+  },
+  "Nintendo Game Boy Color": {
+    "aliases": [
+      "GBC",
+      "Game Boy Color",
+      "Gbc",
+      "gbc"
+    ]
+  },
+  "Nintendo GameCube": {
+    "aliases": [
+      "GC",
+      "GameCube",
+      "Gc",
+      "gc"
+    ]
+  },
+  "Nintendo Pokémon Mini": {
+    "aliases": [
+      "pokemini"
+    ]
+  },
+  "Nintendo Satellaview": {
+    "aliases": [
+      "satellaview"
+    ]
+  },
+  "Nintendo Switch": {
+    "aliases": [
+      "Switch",
+      "switch"
+    ]
+  },
+  "Nintendo Virtual Boy": {
+    "aliases": [
+      "virtualboy"
+    ]
+  },
+  "Nintendo Wii": {
+    "aliases": [
+      "Wii",
+      "wii"
+    ]
+  },
+  "Nintendo Wii U": {
+    "aliases": [
+      "Wii U",
+      "WiiU",
+      "wiiu"
+    ]
+  },
+  "Nokia N-Gage": {
+    "aliases": [
+      "N-Gage"
+    ]
+  },
+  "OpenBOR Game Engine": {
+    "aliases": [
+      "openbor"
+    ]
+  },
+  "Othello Multivision": {
+    "aliases": [
+      "multivision"
+    ]
+  },
+  "Palm OS": {
+    "aliases": [
+      "palm"
+    ]
+  },
+  "Philips CD-i": {
+    "aliases": [
+      "cdimono1"
+    ]
+  },
+  "Philips Videopac G7000": {
+    "aliases": [
+      "videopac"
+    ]
+  },
+  "SAM Coupé": {
+    "aliases": [
+      "samcoupe"
+    ]
+  },
+  "SNK Neo Geo": {
+    "aliases": [
+      "neogeo"
+    ]
+  },
+  "SNK Neo Geo AES": {
+    "aliases": [
+      "Neo Geo AES"
+    ]
+  },
+  "SNK Neo Geo CD": {
+    "aliases": [
+      "Neo Geo CD",
+      "neogeocd",
+      "neogeocdjp"
+    ]
+  },
+  "SNK Neo Geo MVS": {
+    "aliases": [
+      "Neo Geo MVS"
+    ]
+  },
+  "SNK Neo Geo Pocket": {
+    "aliases": [
+      "Neo Geo Pocket",
+      "ngp"
+    ]
+  },
+  "SNK Neo Geo Pocket Color": {
+    "aliases": [
+      "Neo Geo Pocket Color",
+      "ngpc"
+    ]
+  },
+  "ScummVM Game Engine": {
+    "aliases": [
+      "scummvm"
+    ]
+  },
+  "Sega CD": {
+    "aliases": [
+      "Sega CD",
+      "segacd"
+    ]
+  },
+  "Sega Dreamcast": {
+    "aliases": [
+      "Dreamcast",
+      "dreamcast"
+    ]
+  },
+  "Sega Game Gear": {
+    "aliases": [
+      "Game Gear",
+      "gamegear"
+    ]
+  },
+  "Sega Genesis": {
+    "aliases": [
+      "Genesis",
+      "Gensis",
+      "Mega Drive",
+      "Sega Genesis",
+      "Sega Mega Drive/Genesis",
+      "genesis"
+    ]
+  },
+  "Sega Genesis 32X": {
+    "aliases": [
+      "sega32xna"
+    ]
+  },
+  "Sega Master System": {
+    "aliases": [
+      "Master System",
+      "mastersystem"
+    ]
+  },
+  "Sega Mega Drive": {
+    "aliases": [
+      "megadrive"
+    ]
+  },
+  "Sega Mega Drive 32X": {
+    "aliases": [
+      "sega32x"
+    ]
+  },
+  "Sega Mega-CD": {
+    "aliases": [
+      "Mega-CD",
+      "megacd",
+      "megacdjp"
+    ]
+  },
+  "Sega NAOMI": {
+    "aliases": [
+      "naomi"
+    ]
+  },
+  "Sega NAOMI GD-ROM": {
+    "aliases": [
+      "naomigd"
+    ]
+  },
+  "Sega SG-1000": {
+    "aliases": [
+      "SG-1000",
+      "sg-1000"
+    ]
+  },
+  "Sega Saturn": {
+    "aliases": [
+      "Saturn",
+      "saturn",
+      "saturnjp"
+    ]
+  },
+  "Sega Super 32X": {
+    "aliases": [
+      "sega32xjp"
+    ]
+  },
+  "Sharp X1": {
+    "aliases": [
+      "x1"
+    ]
+  },
+  "Sharp X68000": {
+    "aliases": [
+      "x68000"
+    ]
+  },
+  "Sinclair ZX Spectrum": {
+    "aliases": [
+      "ZX Spectrum",
+      "zxspectrum"
+    ]
+  },
+  "Sinclair ZX81": {
+    "aliases": [
+      "zx81"
+    ]
+  },
+  "Solarus Game Engine": {
+    "aliases": [
+      "solarus"
+    ]
+  },
+  "Sony PlayStation": {
+    "aliases": [
+      "PSX",
+      "PlayStation",
+      "Playstation",
+      "psx"
+    ]
+  },
+  "Sony PlayStation 2": {
+    "aliases": [
+      "PS2",
+      "PlayStation 2",
+      "Ps2",
+      "ps2"
+    ]
+  },
+  "Sony PlayStation 3": {
+    "aliases": [
+      "PS3",
+      "PlayStation 3",
+      "Ps3",
+      "ps3"
+    ]
+  },
+  "Sony PlayStation 4": {
+    "aliases": [
+      "PS4",
+      "PlayStation 4",
+      "Ps4",
+      "ps4"
+    ]
+  },
+  "Sony PlayStation 5": {
+    "aliases": [
+      "PS5",
+      "PlayStation 5",
+      "Ps5",
+      "ps5"
+    ]
+  },
+  "Sony PlayStation Portable": {
+    "aliases": [
+      "PSP",
+      "PlayStation Portable",
+      "Psp",
+      "Sony PSP",
+      "Sony PSP Minis",
+      "psp"
+    ]
+  },
+  "Sony PlayStation VR": {
+    "aliases": [
+      "PS VR",
+      "PlayStation VR"
+    ]
+  },
+  "Sony PlayStation VR2": {
+    "aliases": [
+      "PS VR2",
+      "PlayStation VR2"
+    ]
+  },
+  "Sony PlayStation Vita": {
+    "aliases": [
+      "PS Vita",
+      "PlayStation Vita",
+      "Ps Vita",
+      "Psvita",
+      "psvita"
+    ]
+  },
+  "Spectravideo": {
+    "aliases": [
+      "spectravideo"
+    ]
+  },
+  "Stratagus Game Engine": {
+    "aliases": [
+      "stratagus"
+    ]
+  },
+  "Super Nintendo Entertainment System": {
+    "aliases": [
+      "SNES",
+      "Super Famicom",
+      "sfc",
+      "snes",
+      "snesna"
+    ]
+  },
+  "Symbian": {
+    "aliases": [
+      "symbian"
+    ]
+  },
+  "TIC-80 Game Engine": {
+    "aliases": [
+      "tic80"
+    ]
+  },
+  "Tandy Color Computer": {
+    "aliases": [
+      "coco"
+    ]
+  },
+  "Tandy TRS-80": {
+    "aliases": [
+      "trs-80"
+    ]
+  },
+  "Tangerine Computer Systems Oric": {
+    "aliases": [
+      "oric"
+    ]
+  },
+  "Tano Dragon": {
+    "aliases": [
+      "tanodragon"
+    ]
+  },
+  "Texas Instruments TI-99": {
+    "aliases": [
+      "4A",
+      "Texas Instruments TI 99",
+      "ti99"
+    ]
+  },
+  "Thomson MO/TO Series": {
+    "aliases": [
+      "moto"
+    ]
+  },
+  "Thomson TO8": {
+    "aliases": [
+      "to8"
+    ]
+  },
+  "Uzebox": {
+    "aliases": [
+      "uzebox"
+    ]
+  },
+  "Valve Steam": {
+    "aliases": [
+      "steam"
+    ]
+  },
+  "Vectrex": {
+    "aliases": [
+      "vectrex"
+    ]
+  },
+  "Web Browser": {
+    "aliases": [
+      "Web browser"
+    ]
+  },
+  "Windows": {
+    "aliases": [
+      "PC",
+      "PC (Microsoft Windows)"
+    ]
+  }
+}
