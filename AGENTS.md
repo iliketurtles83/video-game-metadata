@@ -5,10 +5,10 @@ Video game metadata merge pipeline: ingest CSV/XML sources → normalize schema/
 ## How to run
 
 **Notebooks (recommended, run in order):**
-1. `01-game_data_exploration.ipynb` — inspect source quality, field distribution, platform naming
-2. `02-merge_game_data.ipynb` — merge all configured sources into unified dataset
-3. `03-data_cleaning.ipynb` — post-merge cleanup and normalization
-4. `04-data_analysis.ipynb` — validate coverage, missingness, duplicates
+1. `notebooks/01-game_data_exploration.ipynb` — inspect source quality, field distribution, platform naming
+2. `notebooks/02-merge_game_data.ipynb` — merge all configured sources into unified dataset
+3. `notebooks/03-data_cleaning.ipynb` — post-merge cleanup and normalization
+4. `notebooks/04-data_analysis.ipynb` — validate coverage, missingness, duplicates
 
 **Tests:** `python -m pytest tests/ -v` (8 tests, all unit tests on pipeline functions)
 **Standalone test:** `python utils/test_pipeline_comprehensive.py` (pytest-style classes, runs outside pytest)
@@ -67,4 +67,4 @@ tests/          ← pytest test suite
 1. Place CSV in `csv/` (it's gitignored).
 2. Add a `SourceConfig` in the merge notebook with: `name`, `path`, optional `rename_map` (source column → canonical column), optional `platform_map` overrides, optional `constants` (fixed column values), optional `transforms`.
 3. If source uses platform names not in `platform_mappings.json`, add them.
-4. Run the merge notebook and validate with `04-data_analysis.ipynb`.
+4. Run the merge notebook and validate with `notebooks/04-data_analysis.ipynb`.

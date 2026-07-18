@@ -35,23 +35,27 @@ def _load_json_file(path: str | Path) -> dict[str, Any]:
 
 
 def load_platform_mappings(
-    mappings_file: str = "utils/gamelist_folder_mappings.json",
+    mappings_file: str = "utils/platform_registry.json",
 ) -> dict[str, str]:
-    """Load platform folder -> canonical platform name mappings.
+    """Load platform folder -> canonical platform name mappings from the unified registry.
+
+    Flattens the registry into a single alias->canonical lookup dict.
 
     Args:
-        mappings_file: Path to gamelist_folder_mappings.json file with format
-                       {"dirname": "Platform Name"}
+        mappings_file: Path to platform_registry.json file
 
     Returns:
-        Dict mapping directory names to canonical platform names
+        Dict mapping directory names (lowercased) to canonical platform names
     """
     raw = _load_json_file(mappings_file)
-    return {
-        str(key).strip().lower(): str(value).strip()
-        for key, value in raw.items()
-        if value is not None
-    }
+    flat = {}
+    for canonical, data in raw.items():
+        aliases = data.get("aliases", [])
+        for alias in aliases:
+            flat[str(alias).strip().lower()] = str(canonical).strip()
+        # Also map the canonical name itself
+        flat[str(canonical).strip().lower()] = str(canonical).strip()
+    return flat
 
 
 def parse_rating(rating_str: Optional[str]) -> Optional[float]:
@@ -128,7 +132,7 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
 
 def load_all_gamelists(
     lists_dir: str = "lists",
-    systems_file: str = "utils/gamelist_folder_mappings.json",
+    systems_file: str = "utils/platform_registry.json",
 ) -> pd.DataFrame:
     """
     Load and parse all gamelist.xml files from the lists directory.

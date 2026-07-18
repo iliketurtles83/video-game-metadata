@@ -53,6 +53,11 @@ COMMON_ROMAN_NUMERALS = {
     "xi", "xii", "xiii", "xiv", "xv", "xvi", "xvii", "xviii", "xix", "xx",
 }
 
+# Global cache for similarity scores to prevent recomputation
+_similarity_cache = {}
+# Maximum cache size to prevent memory issues
+_MAX_CACHE_SIZE = 10000
+
 
 def _roman_replacer(match: re.Match[str]) -> str:
     token = match.group(0)
@@ -65,42 +70,12 @@ SeriesTransform = Callable[[pd.Series], pd.Series]
 DataFrameLoader = Callable[[], pd.DataFrame]
 DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
 
-_GLOBAL_PLATFORM_MAP: Optional[dict[str, str]] = None
-_PLATFORM_MAPPING_CONSISTENCY_CHECKED = False
-
-
-def _load_global_platform_map() -> dict[str, str]:
-    """Load and cache the global platform name mapping from platform_mappings.json."""
-    global _GLOBAL_PLATFORM_MAP
-    if _GLOBAL_PLATFORM_MAP is None:
-        mappings_path = Path(__file__).parent / "platform_mappings.json"
-        try:
-            with open(mappings_path, "r", encoding="utf-8") as f:
-                _GLOBAL_PLATFORM_MAP = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            _GLOBAL_PLATFORM_MAP = {}
-    return cast(dict[str, str], _GLOBAL_PLATFORM_MAP)
-
-
-_GLOBAL_GAMELIST_MAP: Optional[dict[str, str]] = None
-
-
-def _load_global_gamelist_map() -> dict[str, str]:
-    """Load and cache the gamelist folder name mapping from gamelist_folder_mappings.json."""
-    global _GLOBAL_GAMELIST_MAP
-    if _GLOBAL_GAMELIST_MAP is None:
-        mappings_path = Path(__file__).parent / "gamelist_folder_mappings.json"
-        try:
-            with open(mappings_path, "r", encoding="utf-8") as f:
-                _GLOBAL_GAMELIST_MAP = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            _GLOBAL_GAMELIST_MAP = {}
-    return cast(dict[str, str], _GLOBAL_GAMELIST_MAP)
-
-
 def normalize_platform(platform_name: str) -> str:
-    """Normalize a platform name using exact match with fallback to fuzzy matching.
-    
+    """Normalize a platform name using the unified platform registry.
+
+    Uses exact match first, then fuzzy fallback (threshold 75).
+    Tracks unmapped platforms for audit reporting.
+
     Args:
         platform_name: Raw platform name to normalize.
     Returns:
@@ -108,148 +83,38 @@ def normalize_platform(platform_name: str) -> str:
     """
     if not platform_name or not isinstance(platform_name, str):
         return platform_name
-    
+
     stripped = platform_name.strip()
     if not stripped:
         return platform_name
-    
-    # Try exact match in both mapping files
-    global_map = _load_global_platform_map()
-    if stripped in global_map:
-        return global_map[stripped]
-    
-    gamelist_map = _load_global_gamelist_map()
-    if stripped in gamelist_map:
-        return gamelist_map[stripped]
-    
-    # If already a canonical target, return as-is (skip fuzzy)
-    canonical_targets = set(global_map.values()) | set(gamelist_map.values())
-    if stripped in canonical_targets:
-        return stripped
-    
-    # Fuzzy matching fallback
-    all_keys = list(global_map.keys()) + list(gamelist_map.keys())
-    best_match = process.extractOne(
-        stripped,
-        all_keys,
-        scorer=fuzz.token_set_ratio,
-        score_cutoff=85,
-    )
-    if best_match:
-        matched_key, score, _ = best_match
-        canonical = global_map.get(matched_key) or gamelist_map.get(matched_key)
-        if canonical:
+
+    registry, alias_map = _load_platform_registry()
+
+    # Exact match (includes canonical names as their own keys)
+    if stripped in alias_map:
+        return alias_map[stripped]
+
+    # Fuzzy matching fallback against aliases (lowered threshold to 75)
+    all_aliases = list(alias_map.keys())
+    if all_aliases:
+        best_match = process.extractOne(
+            stripped,
+            all_aliases,
+            scorer=fuzz.token_set_ratio,
+            score_cutoff=75,
+        )
+        if best_match:
+            matched_alias, score, _ = best_match
+            canonical = alias_map[matched_alias]
             logging.debug(
-                "Fuzzy platform match: '%s' -> '%s' (score=%d)",
-                stripped, canonical, score,
+                "Fuzzy platform match: '%s' -> '%s' (via alias '%s', score=%d)",
+                stripped, canonical, matched_alias, score,
             )
             return canonical
-    
-    return platform_name
 
-
-def validate_platform_mapping_consistency() -> dict[str, any]:
-    """Validate consistency between platform_mappings.json and gamelist_folder_mappings.json.
-    
-    Returns:
-        Dictionary with consistency check results and warnings
-    """
-    global _PLATFORM_MAPPING_CONSISTENCY_CHECKED
-    
-    if _PLATFORM_MAPPING_CONSISTENCY_CHECKED:
-        return {}
-    
-    # Load both mapping files
-    platform_mappings_path = Path(__file__).parent / "platform_mappings.json"
-    gamelist_mappings_path = Path(__file__).parent / "gamelist_folder_mappings.json"
-    
-    platform_map = {}
-    gamelist_map = {}
-    
-    try:
-        with open(platform_mappings_path, "r", encoding="utf-8") as f:
-            platform_map = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"Warning: Could not load platform_mappings.json: {e}")
-        return {}
-    
-    try:
-        with open(gamelist_mappings_path, "r", encoding="utf-8") as f:
-            gamelist_map = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"Warning: Could not load gamelist_folder_mappings.json: {e}")
-        return {}
-    
-    # Check for inconsistencies
-    inconsistencies = []
-    
-    # Find platforms that exist in both files but with different canonical names
-    platform_keys = set(platform_map.keys())
-    gamelist_keys = set(gamelist_map.keys())
-    
-    common_keys = platform_keys.intersection(gamelist_keys)
-    
-    for key in common_keys:
-        platform_value = platform_map[key]
-        gamelist_value = gamelist_map[key]
-        if platform_value != gamelist_value:
-            inconsistencies.append({
-                'key': key,
-                'platform_mapping': platform_value,
-                'gamelist_mapping': gamelist_value,
-                'type': 'inconsistency'
-            })
-    
-    # Check for platforms that exist only in one file
-    only_in_platform = platform_keys - gamelist_keys
-    only_in_gamelist = gamelist_keys - platform_keys
-    
-    for key in only_in_platform:
-        inconsistencies.append({
-            'key': key,
-            'platform_mapping': platform_map[key],
-            'gamelist_mapping': None,
-            'type': 'only_in_platform'
-        })
-        
-    for key in only_in_gamelist:
-        inconsistencies.append({
-            'key': key,
-            'platform_mapping': None,
-            'gamelist_mapping': gamelist_map[key],
-            'type': 'only_in_gamelist'
-        })
-    
-    _PLATFORM_MAPPING_CONSISTENCY_CHECKED = True
-    
-    return {
-        'inconsistencies': inconsistencies,
-        'total_inconsistencies': len(inconsistencies),
-        'only_in_platform': len(only_in_platform),
-        'only_in_gamelist': len(only_in_gamelist)
-    }
-
-
-def print_platform_mapping_consistency_report():
-    """Print a detailed report of platform mapping consistency issues."""
-    report = validate_platform_mapping_consistency()
-    if report and report.get('total_inconsistencies', 0) > 0:
-        print("⚠️  Platform Mapping Inconsistency Report:")
-        print(f"  Found {report['total_inconsistencies']} inconsistencies")
-        print(f"  {report['only_in_platform']} keys only in platform_mappings.json")
-        print(f"  {report['only_in_gamelist']} keys only in gamelist_folder_mappings.json")
-        
-        for inconsistency in report['inconsistencies']:
-            if inconsistency['type'] == 'inconsistency':
-                print(f"    '{inconsistency['key']}': platform='{inconsistency['platform_mapping']}', gamelist='{inconsistency['gamelist_mapping']}'")
-            elif inconsistency['type'] == 'only_in_platform':
-                print(f"    '{inconsistency['key']}': only in platform_mappings.json = '{inconsistency['platform_mapping']}'")
-            elif inconsistency['type'] == 'only_in_gamelist':
-                print(f"    '{inconsistency['key']}': only in gamelist_folder_mappings.json = '{inconsistency['gamelist_mapping']}'")
-    elif report:
-        print("✓ Platform mapping consistency check passed")
-    else:
-        print("⚠️  Could not perform platform mapping consistency check")
+    # No match found — track for audit
+    _unmapped_platforms.append(stripped)
+    return stripped
 
 
 @dataclass
@@ -328,7 +193,7 @@ def build_name_match_key(name: Any) -> Any:
     """Build a stable key for near-duplicate title matching.
 
     Keeps the display title untouched while normalizing punctuation/case variants
-    used during deduplication.
+    used during deduplication. Strips region tags and ROM hack markers.
     """
     if pd.isna(name):
         return name
@@ -340,16 +205,23 @@ def build_name_match_key(name: Any) -> Any:
     # Handle special characters that can break matching
     # Replace various hyphens with standard spaces
     text = re.sub(r"[‐‑–—-]+", " ", raw)
-    
+
     # Remove control characters that might break matching
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    
+
+    # Remove region/edition tags in parentheses (USA, PAL, NTSC-J, etc.)
+    text = re.sub(rf'\s*\({_REGION_TAGS}\)\s*', ' ', text, flags=re.IGNORECASE)
+
+    # Remove ROM tags: [!], [a], [T+En], etc.
+    text = re.sub(r'\s*\[[!a-zA-Z][a-zA-Z0-9+]{0,3}\]\s*', ' ', text)
+
     # Normalize punctuation and whitespace
+    # Preserve &, -, and apostrophes (meaningful in titles like "Game & Watch", "Super Mario Bros.", "Donkey Kong")
     text = re.sub(r"[:/]+", " ", text)
-    text = re.sub(r"[’'`]+", "", text)
-    text = re.sub(r"[^\w\s]+", " ", text)
+    text = re.sub(r"[’`]+", "", text)
+    text = re.sub(r"[^\w\s&'-]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
-    
+
     # Handle empty results gracefully
     if not text:
         # Preserve a stable key for non-empty originals that normalize to empty
@@ -425,10 +297,43 @@ def clean_filename(filename: Any) -> Any:
         return filename
 
 
-# Global cache for similarity scores to prevent recomputation
-_similarity_cache = {}
-# Maximum cache size to prevent memory issues
-_MAX_CACHE_SIZE = 10000
+# Platform registry cache
+_GLOBAL_PLATFORM_REGISTRY: Optional[dict[str, dict[str, list[str]]]] = None
+# Flat alias->canonical lookup for O(1) exact matches
+_GLOBAL_ALIAS_MAP: Optional[dict[str, str]] = None
+# Track unmapped platform names for audit
+_unmapped_platforms: list[str] = []
+
+
+def _load_platform_registry() -> tuple[dict[str, dict[str, list[str]]], dict[str, str]]:
+    """Load and cache the unified platform registry from platform_registry.json.
+
+    Returns:
+        Tuple of (registry dict, flat alias->canonical lookup dict)
+    """
+    global _GLOBAL_PLATFORM_REGISTRY, _GLOBAL_ALIAS_MAP
+    if _GLOBAL_PLATFORM_REGISTRY is None:
+        registry_path = Path(__file__).parent / "platform_registry.json"
+        try:
+            with open(registry_path, "r", encoding="utf-8") as f:
+                _GLOBAL_PLATFORM_REGISTRY = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            _GLOBAL_PLATFORM_REGISTRY = {}
+        # Build flat alias->canonical lookup
+        _GLOBAL_ALIAS_MAP = {}
+        for canonical, data in _GLOBAL_PLATFORM_REGISTRY.items():
+            aliases = data.get("aliases", [])
+            for alias in aliases:
+                _GLOBAL_ALIAS_MAP[alias] = canonical
+            # Also map the canonical name to itself
+            _GLOBAL_ALIAS_MAP[canonical] = canonical
+    return _GLOBAL_PLATFORM_REGISTRY, _GLOBAL_ALIAS_MAP
+
+
+def get_unmapped_platforms() -> list[str]:
+    """Return the list of platform names that couldn't be normalized."""
+    return list(_unmapped_platforms)
+
 
 def _manage_cache_size():
     """Manage cache size to prevent memory issues."""
@@ -681,16 +586,9 @@ def normalize_source(
         else:
             out[mv_col] = out[mv_col].apply(_flatten_multi_value)
 
-    # Apply global platform name mapping from platform_mappings.json
+    # Apply global platform name mapping from platform_registry.json
     if "platform" in out.columns:
-        global_map = _load_global_platform_map()
-        if global_map:
-            # Check for consistency issues before applying mapping
-            consistency_report = validate_platform_mapping_consistency()
-            if consistency_report and consistency_report.get('total_inconsistencies', 0) > 0:
-                print_platform_mapping_consistency_report()
-            
-            out["platform"] = out["platform"].apply(normalize_platform)
+        out["platform"] = out["platform"].apply(normalize_platform)
 
     # Apply per-source platform overrides (if any)
     if config.platform_map and "platform" in out.columns:
@@ -756,12 +654,13 @@ def normalize_source(
 
 
 def get_platform_mappings_summary() -> dict:
-    """Get a summary of the current platform mappings for debugging."""
-    platform_map = _load_global_platform_map()
+    """Get a summary of the current platform registry for debugging."""
+    registry, alias_map = _load_platform_registry()
     return {
-        'total_mappings': len(platform_map),
-        'sample_mappings': dict(list(platform_map.items())[:10]) if platform_map else {},
-        'consistency_check': validate_platform_mapping_consistency()
+        'total_canonical_platforms': len(registry),
+        'total_aliases': len(alias_map),
+        'sample_mappings': dict(list(registry.items())[:10]) if registry else {},
+        'unmapped_platforms': get_unmapped_platforms(),
     }
 
 
@@ -947,9 +846,10 @@ def _process_chunk(args):
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
         
         # Normalize punctuation and whitespace
+        # Preserve &, -, and apostrophes (meaningful in titles like "Game & Watch", "Super Mario Bros.", "Donkey Kong")
         text = re.sub(r"[:/]+", " ", text)
-        text = re.sub(r"[’'`]+", "", text)
-        text = re.sub(r"[^\w\s]+", " ", text)
+        text = re.sub(r"[’`]+", "", text)
+        text = re.sub(r"[^\w\s&'-]+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         
         # Create a grouping key that's more robust for grouping
@@ -1131,9 +1031,10 @@ def _identify_potential_duplicates_standard(df: pd.DataFrame, name_column: str =
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
         
         # Normalize punctuation and whitespace
+        # Preserve &, -, and apostrophes (meaningful in titles like "Game & Watch", "Super Mario Bros.", "Donkey Kong")
         text = re.sub(r"[:/]+", " ", text)
-        text = re.sub(r"[’'`]+", "", text)
-        text = re.sub(r"[^\w\s]+", " ", text)
+        text = re.sub(r"[’`]+", "", text)
+        text = re.sub(r"[^\w\s&'-]+", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         
         # Create a grouping key that's more robust for grouping
@@ -1234,6 +1135,233 @@ def collapse_by_name(
     return collapsed
 
 
+def _deduplicate_source(df: pd.DataFrame, source_name: str) -> pd.DataFrame:
+    """Deduplicate a source DataFrame using exact _name_match_key + platform matching.
+
+    Runs a lightweight dedup pass within each source before the main merge.
+    Uses groupby on (_name_match_key, platform) with pick_first for all columns.
+
+    Args:
+        df: Source DataFrame to deduplicate.
+        source_name: Name of the source (for logging).
+
+    Returns:
+        Deduplicated DataFrame.
+    """
+    if df.empty:
+        return df
+
+    dedup_keys = [NAME_MATCH_KEY_COLUMN, "platform"]
+    available_keys = [k for k in dedup_keys if k in df.columns]
+
+    if not available_keys:
+        return df
+
+    original_length = len(df)
+    agg_map: dict[str, Any] = {}
+    for column in df.columns:
+        if column in available_keys:
+            continue
+        agg_map[column] = pick_first
+
+    deduped = df.groupby(available_keys, as_index=False).agg(agg_map)
+    removed = original_length - len(deduped)
+    if removed > 0:
+        print(f"  [pre-merge dedup] {source_name}: removed {removed} duplicates ({original_length} -> {len(deduped)})")
+    return deduped
+
+
+def generate_audit_report(
+    df: pd.DataFrame,
+    source_configs: Sequence[SourceConfig],
+    main_config: SourceConfig,
+    output_dir: Optional[str] = None,
+    fuzzy_dedup_stats: Optional[dict] = None,
+) -> dict:
+    """Generate an audit report with key metrics for validation.
+
+    Args:
+        df: Merged DataFrame.
+        source_configs: List of source configs used in the merge.
+        main_config: Main source config.
+        output_dir: Directory to write merge_audit.json.
+        fuzzy_dedup_stats: Stats from fuzzy dedup step.
+
+    Returns:
+        Audit report dict.
+    """
+    # Row summary
+    row_summary = {
+        "total_rows": len(df),
+        "unique_platforms": int(df["platform"].nunique()) if "platform" in df.columns and not df["platform"].empty else 0,
+        "unique_names": int(df["name"].nunique()) if "name" in df.columns and not df["name"].empty else 0,
+        "rows_with_missing_name": int(df["name"].isna().sum()) if "name" in df.columns else 0,
+        "rows_with_missing_platform": int(df["platform"].isna().sum()) if "platform" in df.columns else 0,
+    }
+
+    # Platform audit
+    unmapped = get_unmapped_platforms()
+    platform_counts = {}
+    if "platform" in df.columns and not df["platform"].empty:
+        platform_counts = df["platform"].value_counts().to_dict()
+
+    platform_audit = {
+        "unmapped_platforms_list": list(set(unmapped)),
+        "platform_count_per_name": platform_counts,
+        "platforms_with_fuzzy_match_notes": [],
+    }
+
+    # Fuzzy dedup summary
+    fuzzy_dedup_summary = {
+        "auto_merged_high_count": 0,
+        "auto_merged_standard_count": 0,
+        "review_queue_count": 0,
+        "review_queue_file_path": "",
+    }
+    if fuzzy_dedup_stats:
+        fuzzy_dedup_summary.update(fuzzy_dedup_stats)
+
+    # Source contribution
+    source_names = [main_config.name] + [sc.name for sc in source_configs]
+    source_contribution = {
+        "rows_per_source": {name: 0 for name in source_names},
+        "new_rows_per_source": {name: 0 for name in source_names},
+    }
+
+    report = {
+        "row_summary": row_summary,
+        "platform_audit": platform_audit,
+        "fuzzy_dedup_summary": fuzzy_dedup_summary,
+        "source_contribution": source_contribution,
+    }
+
+    # Write report
+    if output_dir:
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        report_path = Path(output_dir) / "merge_audit.json"
+        # Convert platform_counts keys to strings for JSON serialization
+        serializable_report = dict(report)
+        serializable_report["platform_audit"]["platform_count_per_name"] = {
+            str(k): v for k, v in serializable_report["platform_audit"]["platform_count_per_name"].items()
+        }
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(serializable_report, f, indent=2, ensure_ascii=False, default=str)
+        print(f"[audit] Report written to {report_path}")
+
+    return report
+
+
+def _run_fuzzy_dedup(
+    df: pd.DataFrame,
+    output_dir: Optional[str] = None,
+    auto_merge_high_threshold: float = 0.95,
+    auto_merge_standard_threshold: float = 0.90,
+    review_queue_threshold: float = 0.80,
+) -> tuple[pd.DataFrame, list[dict]]:
+    """Run fuzzy name deduplication on a merged DataFrame with confidence tiers.
+
+    Args:
+        df: Merged DataFrame to deduplicate.
+        output_dir: Directory to write review_queue.csv (optional).
+        auto_merge_high_threshold: Confidence >= this -> auto-merge (high confidence).
+        auto_merge_standard_threshold: Confidence in [0.90, this) -> auto-merge (standard).
+        review_queue_threshold: Confidence in [this, 0.90) -> review queue (not auto-merged).
+
+    Returns:
+        Tuple of (deduplicated DataFrame, review_queue list).
+    """
+    if df.empty or "name" not in df.columns:
+        return df, []
+
+    review_queue: list[dict] = []
+    auto_merged: list[dict] = []
+    idx_to_drop: set[int] = set()
+
+    # Find potential duplicates using existing function
+    potential_dups = identify_potential_duplicates(
+        df,
+        name_column="name",
+        threshold=review_queue_threshold,
+        max_comparisons=50000,
+        use_multiprocessing=False,
+    )
+
+    for idx1, idx2, confidence in potential_dups:
+        name1 = df.iloc[idx1]["name"]
+        name2 = df.iloc[idx2]["name"]
+        platform1 = df.iloc[idx1].get("platform", "")
+        platform2 = df.iloc[idx2].get("platform", "")
+
+        if confidence >= auto_merge_high_threshold:
+            tier = "auto_merge_high"
+        elif confidence >= auto_merge_standard_threshold:
+            tier = "auto_merge_standard"
+        else:
+            tier = "review_queue"
+
+        if tier == "review_queue":
+            review_queue.append({
+                "name1": name1,
+                "name2": name2,
+                "confidence": round(confidence, 4),
+                "platform1": platform1,
+                "platform2": platform2,
+                "merged": False,
+            })
+            continue
+
+        # Auto-merge: keep the row with better data (longer summary, more complete fields)
+        row1 = df.iloc[idx1]
+        row2 = df.iloc[idx2]
+
+        def data_completeness(row):
+            non_null = row.notna().sum()
+            summary_len = len(str(row.get("summary", ""))) if pd.notna(row.get("summary")) else 0
+            return non_null + summary_len / 10.0
+
+        if data_completeness(row2) > data_completeness(row1):
+            keep_idx, drop_idx = idx2, idx1
+        else:
+            keep_idx, drop_idx = idx1, idx2
+
+        idx_to_drop.add(drop_idx)
+        auto_merged.append({
+            "name1": name1,
+            "name2": name2,
+            "confidence": round(confidence, 4),
+            "tier": tier,
+            "platform": df.iloc[keep_idx].get("platform", ""),
+        })
+
+    if auto_merged:
+        print(f"[fuzzy dedup] Auto-merged {len(auto_merged)} pairs")
+        for m in auto_merged[:10]:
+            print(f"  {m['name1']} <-> {m['name2']} (confidence={m['confidence']}, tier={m['tier']})")
+        if len(auto_merged) > 10:
+            print(f"  ... and {len(auto_merged) - 10} more")
+
+    if review_queue:
+        print(f"[fuzzy dedup] Review queue: {len(review_queue)} pairs")
+
+    # Drop auto-merged rows
+    if idx_to_drop:
+        df = df.drop(index=list(idx_to_drop))
+        print(f"[fuzzy dedup] Dropped {len(idx_to_drop)} duplicate rows")
+
+    # Write review queue to file
+    if review_queue:
+        if output_dir:
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            review_df = pd.DataFrame(review_queue)
+            review_path = Path(output_dir) / "review_queue.csv"
+            review_df.to_csv(review_path, index=False)
+            print(f"[fuzzy dedup] Review queue written to {review_path}")
+        else:
+            print(f"[fuzzy dedup] Review queue: {len(review_queue)} pairs (no output_dir specified)")
+
+    return df, review_queue
+
+
 def run_merge_pipeline(
     main_config: SourceConfig,
     source_configs: Sequence[SourceConfig],
@@ -1245,9 +1373,10 @@ def run_merge_pipeline(
     collapse_platforms: bool = False,
     collapse_resolver_map: Optional[Mapping[str, Any]] = None,
     duplicate_detection_threshold: float = 0.8,
+    output_dir: Optional[str] = None,
 ) -> pd.DataFrame:
     """Orchestrate merging of multiple data sources into a canonical schema.
-    
+
     Args:
         main_config: Primary dataset configuration (base for merging).
         source_configs: List of additional sources to merge into main.
@@ -1264,7 +1393,8 @@ def run_merge_pipeline(
         collapse_resolver_map: Custom resolver map for the collapse step.
                     Defaults to ``collapse_resolver`` from resolvers.py.
         duplicate_detection_threshold: Threshold for fuzzy name matching to detect potential duplicates.
-    
+        output_dir: Directory to write audit/report files (review_queue.csv, merge_audit.json).
+
     Returns:
         Merged DataFrame with deduplicated rows grouped by key_columns.
         If collapse_platforms is True, returns one row per game name.
@@ -1280,11 +1410,13 @@ def run_merge_pipeline(
             for column in effective_key_columns
         )
 
+    # Pre-merge dedup on main source
     merged = prepare_source(
         main_config,
         target_columns=effective_target_columns,
         key_columns=effective_key_columns,
     )
+    merged = _deduplicate_source(merged, main_config.name)
     main_length = len(merged)
 
     for source_config in source_configs:
@@ -1293,6 +1425,7 @@ def run_merge_pipeline(
             target_columns=effective_target_columns,
             key_columns=effective_key_columns,
         )
+        source = _deduplicate_source(source, source_config.name)
         merged = merge_into_main(
             merged,
             source,
@@ -1306,6 +1439,15 @@ def run_merge_pipeline(
         main_length = merged_length
         print(f"main size: {merged_length}, {source_config.name} size: {source_length}, new games: {games_added}")
 
+    # Fuzzy name dedup after merge
+    fuzzy_dedup_stats = None
+    if use_name_match_key:
+        merged, review_queue = _run_fuzzy_dedup(merged, output_dir=output_dir)
+        fuzzy_dedup_stats = {
+            "review_queue_count": len(review_queue),
+            "review_queue_file_path": f"{output_dir}/review_queue.csv" if output_dir else "",
+        }
+
     if NAME_MATCH_KEY_COLUMN in merged.columns:
         merged = merged.drop(columns=[NAME_MATCH_KEY_COLUMN])
 
@@ -1315,5 +1457,14 @@ def run_merge_pipeline(
             name_column="name",
             resolver_map=collapse_resolver_map,
         )
+
+    # Generate audit report
+    generate_audit_report(
+        merged,
+        source_configs=source_configs,
+        main_config=main_config,
+        output_dir=output_dir,
+        fuzzy_dedup_stats=fuzzy_dedup_stats,
+    )
 
     return merged
