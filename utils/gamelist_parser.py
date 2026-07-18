@@ -2,11 +2,13 @@
 Parser for gamelist.xml files from RetroPie/EmulationStation.
 Extracts game metadata from XML files organized by platform.
 """
+import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+
 import pandas as pd
-import json
+
 
 GAMELIST_COLUMN_MAP = {
     "name": "name",
@@ -17,36 +19,39 @@ GAMELIST_COLUMN_MAP = {
     "publisher": "publisher",
     "genre": "genres",
     "players": "players",
-    "rating": "user_rating"
+    "rating": "user_rating",
 }
 
 
-def load_platform_mappings(mappings_file: str = "utils/gamelist_folder_mappings.json") -> dict[str, str]:
-    """
-    Load platform directory-to-name mappings from JSON.
-    
+def _load_json_file(path: str | Path) -> dict[str, Any]:
+    """Load a JSON object from file, returning an empty dict on failure."""
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+
+    return data if isinstance(data, dict) else {}
+
+
+def load_platform_mappings(
+    mappings_file: str = "utils/gamelist_folder_mappings.json",
+) -> dict[str, str]:
+    """Load platform folder -> canonical platform name mappings.
+
     Args:
-        mappings_file: Path to gamelist_folder_mappings.json file with format {"dirname": "Platform Name"}
-    
+        mappings_file: Path to gamelist_folder_mappings.json file with format
+                       {"dirname": "Platform Name"}
+
     Returns:
         Dict mapping directory names to canonical platform names
     """
-
-    try:
-        with open(mappings_file, 'r', encoding='utf-8') as f:
-            raw_mappings = json.load(f)
-    except (json.JSONDecodeError, OSError, TypeError):
-        return {}
-
-    if not isinstance(raw_mappings, dict):
-        return {}
-
+    raw = _load_json_file(mappings_file)
     return {
         str(key).strip().lower(): str(value).strip()
-        for key, value in raw_mappings.items()
+        for key, value in raw.items()
         if value is not None
     }
-
 
 
 def parse_rating(rating_str: Optional[str]) -> Optional[float]:
@@ -61,15 +66,15 @@ def parse_rating(rating_str: Optional[str]) -> Optional[float]:
         value = float(rating_str)
     except (TypeError, ValueError):
         return None
-    
+
     # If value is already in 0-10 range, return as-is
     if value > 1.0:
         return value
-    
+
     # If value is 0-1 range, scale to 0-10
     if 0.0 <= value <= 1.0:
         return value * 10
-    
+
     # Out of expected range, return as-is
     return value
 
@@ -77,20 +82,20 @@ def parse_rating(rating_str: Optional[str]) -> Optional[float]:
 def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
     """
     Parse a single gamelist.xml file and extract game metadata.
-    
+
     Args:
         xml_path: Path to gamelist.xml file
         platform: Canonical platform name
-    
+
     Returns:
         List of game dictionaries
     """
     games = []
-    
+
     try:
         tree = ET.parse(xml_path)
         root = tree.getroot()
-        
+
         for game in root.findall('game'):
             # Skip if no name
             name_elem = game.find('name')
@@ -112,12 +117,12 @@ def parse_gamelist_xml(xml_path: Path, platform: str) -> list[dict]:
                 game_data[target_field] = value
 
             games.append(game_data)
-    
+
     except ET.ParseError as e:
         print(f"Error parsing {xml_path}: {e}")
     except Exception as e:
         print(f"Unexpected error parsing {xml_path}: {e}")
-    
+
     return games
 
 
@@ -127,39 +132,33 @@ def load_all_gamelists(
 ) -> pd.DataFrame:
     """
     Load and parse all gamelist.xml files from the lists directory.
-    
+
     Args:
         lists_dir: Directory containing platform subdirectories
         systems_file: Path to gamelist_folder_mappings.json file
-    
+
     Returns:
         DataFrame with all game data from gamelist.xml files
     """
     lists_path = Path(lists_dir)
     platform_mappings = load_platform_mappings(systems_file)
-    
+
     all_games = []
-    
+
     # Find all gamelist.xml files
     for xml_file in lists_path.rglob('gamelist.xml'):
         # Get platform directory name (parent of gamelist.xml)
         platform_dir = xml_file.parent.name
-        
+
         # Map to canonical platform name
         platform_key = platform_dir.strip().lower()
         platform_name = platform_mappings.get(platform_key, platform_dir)
-        
+
         # Parse the XML file
         games = parse_gamelist_xml(xml_file, platform_name)
         all_games.extend(games)
-        
-        # print(f"{platform_name}: {len(games)}")
-    
+
     # Convert to DataFrame
     df = pd.DataFrame(all_games)
-    
-    # print(f"\nTotal games loaded: {len(df)}")
-    # if not df.empty:
-    #     print(f"Platforms: {df['platform'].nunique()}")
-    
+
     return df

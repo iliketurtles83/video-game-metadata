@@ -1,29 +1,25 @@
 # Video Game Metadata Pipeline
 
-Merge, clean, analyze, and apply video game metadata across multiple sources and console gamelists.
+Merge, clean, and analyze video game metadata from multiple sources.
 
 This project is built for a practical workflow:
 - ingest metadata from CSV and `gamelist.xml`
 - normalize schema and platform names
 - deduplicate and clean records
 - analyze quality and coverage
-- write enriched metadata back into per-platform `gamelist.xml`
 
 ## Project Goals
 
 - Build a canonical game metadata table from heterogeneous sources.
 - Keep platform naming consistent across CSV sources and filesystem folders.
-- Preserve existing gamelist structure while updating metadata fields safely.
 - Produce outputs usable for frontend browsing, curation, and downstream analysis.
 
 ## Repository Layout
 
 - `csv/`: raw and processed tabular datasets.
-- `lists/<platform>/gamelist.xml`: source gamelists per platform.
-- `lists/<platform>/gamelist_updated.xml`: generated updated gamelists.
 - `utils/`: reusable pipeline modules.
 - `output/`: generated artifacts for testing and exports.
-- `scripts/`: helper shell scripts for export/update flows.
+- `scripts/`: helper shell scripts for export flows.
 
 ## End-to-End Workflow
 
@@ -37,8 +33,6 @@ Run notebooks in this order:
 	Apply post-merge cleanup and normalization rules.
 4. `04-data_analysis.ipynb`
 	Validate coverage, missingness, duplicates, and output quality.
-5. `05-update-gamelists.ipynb`
-	Apply merged metadata into platform-specific `gamelist.xml` files.
 
 ## Canonical Schema (Core Columns)
 
@@ -89,13 +83,6 @@ Two mapping files serve different responsibilities:
 - tolerates missing tags and normalizes values
 - applies folder-to-platform mapping for merge compatibility
 
-### `utils/update_gamelist.py`
-- writes merged metadata back into gamelist XML entries
-- updates desired metadata fields while preserving sensitive existing tags (for example image/media tags)
-
-### `utils/gamelist_builder.py`
-- helper logic for constructing/updating gamelist structures from DataFrame outputs
-
 ## Inputs and Outputs
 
 ### Primary Inputs
@@ -105,12 +92,10 @@ Two mapping files serve different responsibilities:
 ### Primary Outputs
 - merged datasets such as `csv/combined.csv`, `csv/all_games.csv`
 - cleaned datasets such as `csv/game_dataset_cleaned.csv`
-- updated gamelists in each `lists/<platform>/gamelist_updated.xml`
 
 ## Running From Scripts (Optional)
 
 If you prefer shell workflows over notebooks, helper scripts are available in `scripts/`:
-- `scripts/cpgamelist.sh`
 - `scripts/export_tables.sh`
 
 Use these after reviewing notebook logic so script execution matches your current mapping and cleaning assumptions.
@@ -119,7 +104,6 @@ Use these after reviewing notebook logic so script execution matches your curren
 
 - Keep mapping JSON files up to date before major merges.
 - Re-run analysis after cleaning to catch regressions early.
-- Test gamelist updates on a small platform subset first (for example `output/test_games/`) before full rollout.
 - Track schema changes explicitly when introducing new metadata sources.
 
 ## License

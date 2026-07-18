@@ -35,6 +35,7 @@ CANONICAL_SCHEMA = {
     'cooperative': 'boolean',
     'rating': 'int64',
     'user_rating': 'float64',
+    'version': 'string',
 }
 
 DEFAULT_COLUMNS = tuple(CANONICAL_SCHEMA.keys())

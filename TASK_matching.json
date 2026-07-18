@@ -1,0 +1,289 @@
+{
+  "title": "Video Game Metadata Matching Pipeline Overhaul",
+  "description": "Fix platform canonicalization, unify mapping files, wire in fuzzy name dedup, and add audit infrastructure",
+  "priority": "high",
+  "files_to_modify": [
+    "utils/platform_mappings.json",
+    "utils/gamelist_folder_mappings.json",
+    "utils/merge_pipeline.py",
+    "tests/test_matching.py",
+    "tests/test_final.py"
+  ],
+  "tasks": [
+    {
+      "id": "P1-1",
+      "phase": 1,
+      "title": "Unify platform canonical names into single registry",
+      "status": "pending",
+      "description": "Replace the two separate JSON mapping files with a single utils/platform_registry.json that defines canonical platform names and their aliases. This eliminates silent platform fragmentation caused by inconsistent canonical names across files.",
+      "details": {
+        "canonical_name_rules": {
+          "playstation_spelling": "Use 'PlayStation' (capital S) everywhere — Sony's official spelling. Fix all entries in both files that use 'Playstation'.",
+          "ampersand_preservation": "Use 'Nintendo Game & Watch' (official Nintendo branding). Update gamelist_folder_mappings.json entry from 'Nintendo Game and Watch' to 'Nintendo Game & Watch'.",
+          "xbox_series_s": "Add 'Xbox Series S' as a distinct canonical platform, separate from 'Xbox Series X'.",
+          "single_source_of_truth": "One JSON file. Each canonical name has an 'aliases' array listing all source variants (CSV names and gamelist folder names)."
+        },
+        "registry_format": {
+          "example": {
+            "Nintendo Game & Watch": {
+              "aliases": ["Game & Watch", "gameandwatch", "Nintendo Game & Watch"]
+            },
+            "Sony PlayStation": {
+              "aliases": ["PlayStation", "PSX", "psx", "Playstation"]
+            },
+            "Sony PlayStation Portable": {
+              "aliases": ["PSP", "PlayStation Portable", "Sony PSP", "Sony PSP Minis", "psp"]
+            }
+          }
+        },
+        "migration_steps": [
+          "Read both existing JSON files",
+          "Build unified canonical target set using 'PlayStation' spelling and 'Game & Watch' ampersand",
+          "Cross-reference all aliases between the two files",
+          "Write new utils/platform_registry.json",
+          "Delete utils/platform_mappings.json and utils/gamelist_folder_mappings.json",
+          "Update all imports and function calls in merge_pipeline.py to use the new registry"
+        ]
+      }
+    },
+    {
+      "id": "P1-2",
+      "phase": 1,
+      "title": "Rewrite normalize_platform() for the new registry",
+      "status": "pending",
+      "depends_on": ["P1-1"],
+      "description": "Update normalize_platform() to load and use the single platform_registry.json. Fix the fuzzy fallback threshold and add logging for unmapped platforms.",
+      "details": {
+        "changes": [
+          "Replace _load_global_platform_map() and _load_global_gamelist_map() with a single _load_platform_registry() function",
+          "Build a flat alias->canonical lookup dict from the registry for O(1) exact matches",
+          "Lower fuzzy threshold from 85 to 75 for platform matching to avoid false merges (e.g., Xbox Series S -> Series X at 92)",
+          "Add logging (print or logging module) when a platform name falls through to unmapped — collect these for periodic audit",
+          "Keep the 'already canonical' shortcut (skip fuzzy if input is itself a canonical name)",
+          "Remove the consistency checker validate_platform_mapping_consistency() — no longer needed with a single file"
+        ],
+        "new_unmapped_tracking": "Add a module-level list _unmapped_platforms that collects platform names that couldn't be normalized. Provide a function get_unmapped_platforms() that returns the list for audit reporting."
+      }
+    },
+    {
+      "id": "P1-3",
+      "phase": 1,
+      "title": "Update all callers of platform mapping functions",
+      "status": "pending",
+      "depends_on": ["P1-1", "P1-2"],
+      "description": "Find and update all references to the old platform mapping files and functions throughout the codebase.",
+      "details": {
+        "references_to_update": [
+          "normalize_platform() — the main function being rewritten",
+          "_load_global_platform_map() — replace with _load_platform_registry()",
+          "_load_global_gamelist_map() — remove entirely",
+          "validate_platform_mapping_consistency() — remove entirely",
+          "print_platform_mapping_consistency_report() — remove entirely",
+          "get_platform_mappings_summary() — update to use new registry",
+          "normalize_source() — the call to validate_platform_mapping_consistency() inside the platform normalization block (line 689-691) should be removed",
+          "gamelist_parser.py — if it imports or references platform mapping functions directly",
+          "Any test files that reference the old mapping files"
+        ]
+      }
+    },
+    {
+      "id": "P2-3",
+      "phase": 2,
+      "title": "Add pre-merge within-source dedup",
+      "status": "pending",
+      "depends_on": ["P2-2"],
+      "description": "Before the main merge loop, run a lightweight dedup pass within each source to catch within-source duplicates. Use exact _name_match_key + platform matching (no fuzzy needed here since sources are internally consistent).",
+      "details": {
+        "integration_point": "In run_merge_pipeline(), after prepare_source() returns and before merge_into_main(), deduplicate each source DataFrame using groupby on (_name_match_key, platform) with pick_first for all columns.",
+        "logging": "Print the number of duplicates removed per source."
+      }
+    },
+    {
+      "id": "P2-2",
+      "phase": 2,
+      "title": "Fix build_name_match_key to preserve meaningful punctuation",
+      "status": "pending",
+      "description": "Current implementation strips ALL non-word characters, which breaks titles with meaningful punctuation like 'Game & Watch' -> 'Game Watch'. Preserve &, -, and apostrophes in the match key.",
+      "details": {
+        "current_behavior": "Line 350: re.sub(r\"[^\\w\\s]+\", \" \", text) — strips everything non-alphanumeric",
+        "fix": "Change the regex to preserve &, -, and ' (apostrophe): re.sub(r\"[^\\w\\s&'-]+\", \" \", text). This keeps 'Game & Watch' intact while still stripping parentheses, brackets, periods, etc.",
+        "testing": "Add test cases: 'Game & Watch', 'Super Mario Bros.', \"Donkey Kong\", 'Final Fantasy VII' — verify they produce correct match keys"
+      }
+    },
+    {
+      "id": "P2-1",
+      "phase": 2,
+      "title": "Wire in fuzzy name dedup into run_merge_pipeline()",
+      "status": "pending",
+      "depends_on": ["P2-2"],
+      "description": "Integrate identify_potential_duplicates() into the merge pipeline with confidence-based auto-merge and a review queue for borderline cases.",
+      "details": {
+        "integration_point": "After all sources are merged (after the for loop in run_merge_pipeline(), before the collapse step), run fuzzy dedup on the merged DataFrame.",
+        "confidence_tiers": {
+          "auto_merge_high": {
+            "threshold": 0.95,
+            "action": "Auto-merge the two rows. Keep the row with better data (longer summary, more complete fields, higher rating if available). Log the merge."
+          },
+          "auto_merge_standard": {
+            "threshold": 0.90,
+            "action": "Auto-merge with same resolver logic as the main merge. Log the merge."
+          },
+          "review_queue": {
+            "threshold": "0.80 to 0.89",
+            "action": "Do NOT merge. Add to a review_queue list with both rows, confidence score, and the pair of names. This list is returned alongside the merged DataFrame or written to a log file."
+          }
+        },
+        "implementation_approach": [
+          "After the merge loop, if use_name_match_key is True, call identify_potential_duplicates() on the merged DataFrame",
+          "Group results by confidence tier",
+          "For auto_merge_high and auto_merge_standard: use the existing resolver logic to merge the two rows. The key is the _name_match_key of the pair (they should be similar enough to share a key after normalization).",
+          "For review_queue: collect (idx1, idx2, name1, name2, confidence) tuples",
+          "Drop the review_queue rows from the output (they stay as separate entries for manual review)",
+          "Return both the merged DataFrame and the review_queue (or write review_queue to a JSON/CSV file)"
+        ],
+        "performance_considerations": [
+          "identify_potential_duplicates() already has chunked processing and a max_comparisons limit — keep these",
+          "The dataset is ~482K rows; with the grouping heuristic it should be feasible",
+          "Consider running fuzzy dedup only on the post-merge DataFrame (smaller than individual sources since within-source duplicates were removed in P2-3)"
+        ]
+      }
+    },
+    {
+      "id": "P3-1",
+      "phase": 3,
+      "title": "Add audit/reporting step after merge",
+      "status": "pending",
+      "depends_on": ["P2-1", "P1-2"],
+      "description": "After the merge pipeline completes, generate an audit report with key metrics for validation.",
+      "details": {
+        "report_sections": [
+          {
+            "name": "row_summary",
+            "fields": ["total_rows", "unique_platforms", "unique_names", "rows_with_missing_name", "rows_with_missing_platform"]
+          },
+          {
+            "name": "platform_audit",
+            "fields": ["unmapped_platforms_list", "platform_count_per_name", "platforms_with_fuzzy_match_notes"]
+          },
+          {
+            "name": "fuzzy_dedup_summary",
+            "fields": ["auto_merged_high_count", "auto_merged_standard_count", "review_queue_count", "review_queue_file_path"]
+          },
+          {
+            "name": "source_contribution",
+            "fields": ["rows_per_source", "new_rows_per_source"]
+          }
+        ],
+        "output_format": "Write report to output/merge_audit.json",
+        "review_queue_output": "Write review_queue to output/review_queue.csv with columns: name1, name2, confidence, platform1, platform2, merged (boolean)"
+      }
+    },
+    {
+      "id": "P3-2",
+      "phase": 3,
+      "title": "Add comprehensive tests for matching logic",
+      "status": "pending",
+      "depends_on": ["P1-2", "P2-2"],
+      "description": "Write tests covering the matching functions that are currently untested.",
+      "details": {
+        "test_file": "tests/test_matching.py",
+        "test_cases": {
+          "test_normalize_platform_exact_match": {
+            "description": "Platform name exists in registry, returns canonical name",
+            "examples": ["PS3" -> "Sony PlayStation 3", "nes" -> "Nintendo Game & Watch"]
+          },
+          "test_normalize_platform_fuzzy_match": {
+            "description": "Platform name doesn't exist but fuzzy-matches to a canonical name",
+            "examples": ["Ps3" -> "Sony PlayStation 3", "Nintendo 64" -> "Nintendo 64" (exact canonical)]
+          },
+          "test_normalize_platform_no_match": {
+            "description": "Platform name doesn't match anything, returns original and logs",
+            "examples": ["UnknownPlatform999" -> "UnknownPlatform999", added to _unmapped_platforms"]
+          },
+          "test_normalize_platform_spelling": {
+            "description": "PlayStation vs Playstation spelling normalization",
+            "examples": ["Playstation" -> "Sony PlayStation", "PSX" -> "Sony PlayStation"]
+          },
+          "test_normalize_platform_ampersand": {
+            "description": "Game & Watch variants all normalize to same canonical",
+            "examples": ["Game & Watch" -> "Nintendo Game & Watch", "gameandwatch" -> "Nintendo Game & Watch"]
+          },
+          "test_build_name_match_key_preserves_ampersand": {
+            "description": "Meaningful punctuation is preserved in match key",
+            "examples": ["Game & Watch" -> "game & watch", "Super Mario Bros." -> "super mario bros"]
+          },
+          "test_build_name_match_key_strips_region_tags": {
+            "description": "Region/edition tags are stripped from match key",
+            "examples": ["Tales of Symphonia (USA)" -> "tales of symphonia"]
+          },
+          "test_fuzzy_name_matching_known_positives": {
+            "description": "Same game, different names should score >= 0.9",
+            "examples": ["Final Fantasy VII" vs "Final Fantasy VII International", "Tales of Symphonia" vs "Tales of Symphonia Remastered"]
+          },
+          "test_fuzzy_name_matching_known_negatives": {
+            "description": "Different games should score < 0.8",
+            "examples": ["Chrono Trigger" vs "Chrono Cross", "Super Mario Bros." vs "Super Mario World"]
+          },
+          "test_review_queue_logic": {
+            "description": "Confidence tiers correctly categorize pairs",
+            "examples": [
+              "Identical names -> auto_merge_high (0.95+)",
+              "Minor variation -> auto_merge_standard (0.90-0.94)",
+              "Moderate variation -> review_queue (0.80-0.89)",
+              "Different games -> not in any tier (< 0.80)"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "P3-3",
+      "phase": 3,
+      "title": "Update existing tests and run full suite",
+      "status": "pending",
+      "depends_on": ["P3-2"],
+      "description": "Update existing tests to account for the new platform registry and matching behavior. Run the full test suite.",
+      "details": {
+        "changes": [
+          "Update tests/test_final.py and tests/test_comprehensive.py to use the new platform registry",
+          "Remove any tests that reference platform_mappings.json or gamelist_folder_mappings.json",
+          "Add tests for the new audit/reporting output",
+          "Run: python -m pytest tests/ -v",
+          "Run: python utils/test_pipeline_comprehensive.py"
+        ]
+      }
+    }
+  ],
+  "execution_order": [
+    "P1-1",
+    "P1-2",
+    "P1-3",
+    "P2-3",
+    "P2-2",
+    "P2-1",
+    "P3-1",
+    "P3-2",
+    "P3-3"
+  ],
+  "key_constraints": [
+    "PlayStation must be the canonical spelling (capital S) everywhere",
+    "Game & Watch must use the ampersand (official Nintendo branding)",
+    "Both 'Game & Watch' and 'Game and Watch' variants must normalize to the same canonical name",
+    "Fuzzy dedup auto-merge threshold is 0.90, with 0.95+ as high-confidence tier",
+    "Pairs scoring 0.80-0.89 go to review queue, not auto-merged",
+    "Xbox Series S and Xbox Series X must be distinct canonical platforms",
+    "Single source of truth: one platform_registry.json file",
+    "All existing functionality (resolvers, collapse_by_name, etc.) must continue to work"
+  ],
+  "risk_assessment": {
+    "P1-1_P1-2": "Low risk. Data change + function rewrite. Platform normalization is well-isolated. Safe to test independently.",
+    "P2-2": "Low-medium risk. Changes the name match key, which affects all downstream matching. Must be tested with real data.",
+    "P2-1": "High risk. Changes the fundamental merge behavior. Fuzzy matching can produce false positives. The review queue mitigates this by not auto-merging borderline cases.",
+    "P3-1_P3-2": "Low risk. Additive changes (new tests, new output). No behavior changes."
+  },
+  "rollback_plan": {
+    "P1": "Restore the two original JSON files from git. The old normalize_platform() code is still in the file until P1-2 is complete.",
+    "P2": "The fuzzy dedup code already exists and is not wired in. Reverting P2-1 means simply not calling identify_potential_duplicates() in run_merge_pipeline().",
+    "P3": "Additive changes only. No rollback needed beyond deleting new files."
+  }
+}
