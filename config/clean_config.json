@@ -1,0 +1,61 @@
+{
+    // ============================================================================
+    // Cleaning Pipeline Configuration
+    // ============================================================================
+    // Defines post-merge cleaning steps applied to the merged dataset.
+    // Run: python -m utils pipeline clean --config config/clean_config.json
+    //
+    // Each step can be enabled/disabled independently.
+    // Genre translation maps can be loaded from a separate JSON file.
+    // ============================================================================
+
+    // Column names (override defaults if your merged data uses different names)
+    "columns": {
+        "genres": "genres",
+        "release_date": "release_date",
+        "players": "players",
+        "cooperative": "cooperative",
+        "release_year": "release_year"
+    },
+
+    // Steps to run (set "enabled": false to skip)
+    "steps": {
+        "translate_genres": {
+            "enabled": true,
+            // Path to a JSON file with genre translations (e.g., Portuguese -> English)
+            // Leave null to skip translation; set to "config/genre_translations.json" to enable
+            "map_path": null
+        },
+        "normalize_genres": {
+            "enabled": true,
+            "description": "Split on comma/semicolon, title case, dedupe, sort alphabetically"
+        },
+        "normalize_dates": {
+            "enabled": true,
+            "description": "Parse dates to YYYY-MM-DD, drop time component"
+        },
+        "parse_players": {
+            "enabled": true,
+            "description": "Extract max integer player count from strings like \"1-4\""
+        },
+        "infer_cooperative": {
+            "enabled": true,
+            "description": "If cooperative is missing and players == 1, set cooperative = False"
+        },
+        "derive_year": {
+            "enabled": true,
+            "description": "Fill missing release_year from release_date"
+        },
+        "round_ratings": {
+            "enabled": true,
+            "columns": ["rating", "user_rating"],
+            "decimals": 1
+        }
+    },
+
+    // Output paths (relative to project root)
+    "output": {
+        "cleaned_pkl": "output/cleaned_df.pkl",
+        "cleaned_csv": "output/cleaned_games.csv"
+    }
+}

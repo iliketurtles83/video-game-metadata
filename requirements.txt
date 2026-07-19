@@ -3,7 +3,6 @@ pandas
 numpy
 
 # Fuzzy matching
-fuzzywuzzy
 rapidfuzz
 
 # Notebook analysis/visualization

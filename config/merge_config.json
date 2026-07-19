@@ -1,0 +1,173 @@
+{
+    // ============================================================================
+    // Merge Pipeline Configuration
+    // ============================================================================
+    // This file defines the data sources to ingest and how to normalize them.
+    // Run: python -m utils run
+    //
+    // Structure:
+    //   main.source   - the primary dataset (all others merge into this)
+    //   sources       - additional datasets to merge
+    //   gamelists     - gamelist.xml sources (parsed from lists/<platform>/)
+    //   pipeline      - merge/dedup settings passed to run_merge_pipeline()
+    //   output        - where to write results
+    // ============================================================================
+
+    "main": {
+        "name": "launchbox",
+        "path": "csv/launchbox.csv",
+        "rename_map": {
+            "Name": "name",
+            "BoxArt-Back": "filename",
+            "ReleaseDate": "release_date",
+            "ReleaseYear": "release_year",
+            "Overview": "summary",
+            "MaxPlayers": "players",
+            "Cooperative": "cooperative",
+            "Platform": "platform",
+            "CommunityRating": "user_rating",
+            "Genres": "genres",
+            "Developer": "developer",
+            "Publisher": "publisher"
+        },
+        "transforms": [
+            {
+                "column": "user_rating",
+                "operation": "scale",
+                "factor": 2
+            }
+        ]
+    },
+
+    "sources": [
+        {
+            "name": "all_games",
+            "path": "csv/all_games.csv",
+            "rename_map": {
+                "meta_score": "rating",
+                "user_review": "user_rating"
+            }
+        },
+        {
+            "name": "gametdb",
+            "path": "csv/games_on_gametdb.csv",
+            "rename_map": {
+                "gametdb_platform": "platform",
+                "gametdb_title_en": "name",
+                "gametdb_synopsis_en": "summary",
+                "gametdb_developer": "developer",
+                "gametdb_publisher": "publisher",
+                "gametdb_date": "release_date",
+                "gametdb_players": "players",
+                "gametdb_genre": "genres"
+            }
+        },
+        {
+            "name": "dat_dos",
+            "path": "csv/dat_database_dos.csv",
+            "rename_map": {
+                "gametitle_mame": "name",
+                "developer_mame": "developer",
+                "year_mame": "release_date",
+                "genre_mame": "genres",
+                "description_mame": "summary",
+                "publisher_mame": "publisher"
+            },
+            "constants": {
+                "platform": "MS-DOS"
+            }
+        },
+        {
+            "name": "dat_mame",
+            "path": "csv/dat_database_mame.csv",
+            "rename_map": {
+                "gametitle_mame": "name",
+                "filename_mame": "filename",
+                "manufacturer_mame": "developer",
+                "year_mame": "release_date",
+                "genre_mame": "genres"
+            },
+            "constants": {
+                "platform": "Arcade"
+            },
+            "read_csv_kwargs": {
+                "low_memory": false
+            },
+            "loader_filter": {
+                "column": "systemname_mame",
+                "value": "MAME 0.240 (Arcade).dat"
+            }
+        },
+        {
+            "name": "recalbox",
+            "path": "csv/recalbox_gamelist.csv",
+            "rename_map": {
+                "nomjeu_rom": "name",
+                "fichier_rom": "filename",
+                "description_rom": "summary",
+                "rating_rom": "user_rating",
+                "annee_rom": "release_date",
+                "developer_rom": "developer",
+                "publisher_rom": "publisher",
+                "genre_rom": "genres",
+                "players_rom": "players"
+            },
+            "constants": {
+                "platform": "Nintendo Entertainment System"
+            },
+            "transforms": [
+                {
+                    "column": "user_rating",
+                    "operation": "scale",
+                    "factor": 10
+                }
+            ]
+        },
+        {
+            "name": "game_dataset",
+            "path": "csv/game_dataset_cleaned.csv",
+            "rename_map": {
+                "platforms": "platform",
+                "main_developers": "developer",
+                "publishers": "publisher",
+                "aggregated_rating": "user_rating"
+            },
+            "transforms": [
+                {
+                    "column": "user_rating",
+                    "operation": "scale",
+                    "factor": 0.1
+                }
+            ]
+        }
+    ],
+
+    "gamelists": {
+        "enabled": true,
+        "dir": "lists"
+    },
+
+    "pipeline": {
+        // Columns used as the dedup key (name + platform)
+        "key_columns": ["name", "platform"],
+        // Whether to use fuzzy name matching for dedup
+        "use_name_match_key": true,
+        // Fuzzy matching threshold (0.0-1.0)
+        "duplicate_detection_threshold": 0.8,
+        // If true, collapse multiple platform entries into one row per game
+        "collapse_platforms": false,
+        // Output directory for audit files (review_queue.csv, merge_audit.json)
+        "output_dir": "output"
+    },
+
+    "output": {
+        // Where to write the merged DataFrame (pickle)
+        "merged_pkl": "output/merged_df.pkl",
+        // Where to write the merged DataFrame (CSV)
+        "merged_csv": "output/merged_games.csv",
+        // Where to write the cleaned DataFrame (pickle)
+        "cleaned_pkl": "output/cleaned_df.pkl",
+        // Where to write the cleaned DataFrame (CSV)
+        "cleaned_csv": "output/cleaned_games.csv"
+    }
+}

@@ -40,7 +40,11 @@ def write_to_csv(
         elif col_type == 'boolean':
             out[col] = out[col].astype(str).replace('nan', '')
         elif col_type == 'string':
-            out[col] = out[col].fillna('')
+            # Handle nullable integer columns (e.g., players after parse_players)
+            if pd.api.types.is_integer_dtype(out[col]):
+                out[col] = out[col].astype('Int64').astype(str).replace('nan', '')
+            else:
+                out[col] = out[col].fillna('')
 
     # Ensure output directory exists
     output_path = Path(output_path)
