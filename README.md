@@ -17,11 +17,41 @@ This project is built for a practical workflow:
 ## Repository Layout
 
 - `csv/`: raw and processed tabular datasets.
+- `config/`: JSON config files for the CLI pipeline runner.
 - `utils/`: reusable pipeline modules.
 - `output/`: generated artifacts for testing and exports.
 - `scripts/`: helper shell scripts for export flows.
 
 ## End-to-End Workflow
+
+### CLI (recommended for reproducible runs)
+
+Run the full pipeline (merge → clean → export) from the repo root:
+
+```bash
+# Full pipeline: merge + clean in one shot
+python -m utils full
+
+# Merge only (produces merged_df.pkl + merged CSV)
+python -m utils run
+
+# Clean only (reads merged_df.pkl, applies cleaning, exports CSV)
+python -m utils clean
+```
+
+Both `run` and `full` accept `--config` to point to a custom merge config:
+
+```bash
+python -m utils full --config config/merge_config.json
+```
+
+Config files live in `config/`:
+- `config/merge_config.json` — source paths, column mappings, pipeline settings
+- `config/clean_config.json` — cleaning steps, column names, genre translation maps
+
+See the config files for fully commented examples of every option.
+
+### Notebooks (for exploration and experimentation)
 
 Run notebooks in this order:
 
@@ -74,6 +104,10 @@ Two mapping files serve different responsibilities:
 - platform normalization and datatype harmonization
 - deduplication and multi-source merge logic
 
+### `utils/pipeline.py`
+- CLI runner (`python -m utils`) for reproducible pipeline execution
+- reads JSON configs, builds SourceConfigs, orchestrates merge + clean + export
+
 ### `utils/data_cleaning.py`
 - cleanup helpers for text, null handling, and normalized field formatting
 - post-merge consistency operations used by cleaning notebooks/scripts
@@ -95,10 +129,16 @@ Two mapping files serve different responsibilities:
 
 ## Running From Scripts (Optional)
 
-If you prefer shell workflows over notebooks, helper scripts are available in `scripts/`:
-- `scripts/export_tables.sh`
+If you prefer shell workflows over notebooks, the CLI is the primary interface:
 
-Use these after reviewing notebook logic so script execution matches your current mapping and cleaning assumptions.
+```bash
+python -m utils run        # merge only
+python -m utils clean      # clean only
+python -m utils full       # merge + clean
+```
+
+For legacy shell helpers, see `scripts/`:
+- `scripts/export_tables.sh` — mdb-export for ARRM databases
 
 ## Practical Notes
 
