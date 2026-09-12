@@ -139,11 +139,26 @@
                     "factor": 0.1
                 }
             ]
+        },
+        {
+            "name": "mobygames",
+            "path": "csv/mobygames.csv",
+            "rename_map": {
+                "game_title": "name",
+                "platform_name": "platform"
+            }
+        },
+        {
+            "name": "gamelist_parsed",
+            "path": "csv/gamelist_parsed.csv",
+            "transforms": [
+                {"column": "rating", "operation": "scale", "factor": 10}
+            ]
         }
     ],
 
     "gamelists": {
-        "enabled": true,
+        "enabled": false,
         "dir": "lists"
     },
 
@@ -152,8 +167,6 @@
         "key_columns": ["name", "platform"],
         // Whether to use fuzzy name matching for dedup
         "use_name_match_key": true,
-        // Fuzzy matching threshold (0.0-1.0)
-        "duplicate_detection_threshold": 0.8,
         // If true, collapse multiple platform entries into one row per game
         "collapse_platforms": false,
         // Output directory for audit files (review_queue.csv, merge_audit.json)

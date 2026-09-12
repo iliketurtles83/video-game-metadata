@@ -34,15 +34,15 @@ def write_to_csv(
                 out[col] = out[col].dt.strftime('%Y-%m-%d')
             out[col] = out[col].fillna('')
         elif col_type == 'int64':
-            out[col] = out[col].astype('Int64').astype(str).replace('nan', '')
+            out[col] = pd.to_numeric(out[col], errors='coerce').round().astype('Int64').astype(str).replace('<NA>', '').replace('nan', '')
         elif col_type == 'float64':
-            out[col] = out[col].round(1).astype(str).replace('nan', '')
+            out[col] = pd.to_numeric(out[col], errors='coerce').round(1).astype('Float64').astype(str).replace('<NA>', '').replace('nan', '')
         elif col_type == 'boolean':
-            out[col] = out[col].astype(str).replace('nan', '')
+            out[col] = out[col].astype(str).replace('<NA>', '').replace('nan', '')
         elif col_type == 'string':
             # Handle nullable integer columns (e.g., players after parse_players)
-            if pd.api.types.is_integer_dtype(out[col]):
-                out[col] = out[col].astype('Int64').astype(str).replace('nan', '')
+            if pd.api.types.is_integer_dtype(out[col]) or str(out[col].dtype).startswith('Int'):
+                out[col] = pd.to_numeric(out[col], errors='coerce').round().astype('Int64').astype(str).replace('<NA>', '').replace('nan', '')
             else:
                 out[col] = out[col].fillna('')
 

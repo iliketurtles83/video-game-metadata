@@ -5,7 +5,7 @@ Loads source configurations from JSON, builds SourceConfig objects,
 runs the merge pipeline, applies cleaning, and exports CSVs.
 
 Usage:
-    python -m utils pipeline run --config config/merge_config.json
+    python -m utils run --config config/merge_config.json
     python -m utils pipeline clean --config config/clean_config.json --input output/merged_df.pkl
 """
 
@@ -210,7 +210,6 @@ def run_merge(config_path: str, output_dir: Optional[str] = None, export_all: bo
         source_configs=sources,
         key_columns=pipeline_cfg.get("key_columns", ["name", "platform"]),
         use_name_match_key=pipeline_cfg.get("use_name_match_key", True),
-        duplicate_detection_threshold=pipeline_cfg.get("duplicate_detection_threshold", 0.8),
         collapse_platforms=pipeline_cfg.get("collapse_platforms", False),
         output_dir=pipeline_cfg.get("output_dir"),
     )
@@ -292,7 +291,12 @@ def run_clean(
         "parse_players_col": columns.get("players", "players"),
         "cooperative_col": columns.get("cooperative", "cooperative"),
         "derive_year_col": columns.get("release_year", "release_year"),
+        "platform_col": columns.get("platform", "platform"),
         "genre_translation_map": genre_translation_map,
+        "clean_placeholders": steps.get("clean_placeholder_dates", {}).get("enabled", True),
+        "clean_years": steps.get("clean_release_years", {}).get("enabled", True),
+        "reconcile_year_conflicts": steps.get("derive_year", {}).get("reconcile_conflicts", True),
+        "normalize_ratings": steps.get("normalize_ratings", {}).get("enabled", True),
     }
 
     round_step = steps.get("round_ratings", {})
@@ -346,14 +350,18 @@ def _default_clean_config() -> dict:
             "players": "players",
             "cooperative": "cooperative",
             "release_year": "release_year",
+            "platform": "platform",
         },
         "steps": {
-            "translate_genres": {"enabled": False, "map_path": None},
+            "translate_genres": {"enabled": True, "map_path": "config/genre_translations.json"},
             "normalize_genres": {"enabled": True},
             "normalize_dates": {"enabled": True},
+            "clean_placeholder_dates": {"enabled": True},
+            "clean_release_years": {"enabled": True},
             "parse_players": {"enabled": True},
             "infer_cooperative": {"enabled": True},
-            "derive_year": {"enabled": True},
+            "derive_year": {"enabled": True, "reconcile_conflicts": True},
+            "normalize_ratings": {"enabled": True},
             "round_ratings": {"enabled": True, "columns": ["rating", "user_rating"], "decimals": 1},
         },
         "output": {
@@ -368,7 +376,7 @@ def _default_clean_config() -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    """CLI entry point for `python -m utils pipeline run|clean|full|review`."""
+    """CLI entry point for `python -m utils run|clean|full|review`."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -419,6 +427,17 @@ def main():
     review_parser.add_argument("--limit", type=int, default=None,
                                help="Max number of items to review interactively")
 
+    # --- validate (dataset health and quality checks) ---
+    validate_parser = subparsers.add_parser("validate", help="Validate dataset schema, value ranges, and date consistency")
+    validate_parser.add_argument("--input", "-i", default="output/cleaned_games.csv",
+                                 help="Path to dataset file to validate (default: output/cleaned_games.csv)")
+    validate_parser.add_argument("--parquet", "-p", default=None,
+                                 help="Path to Parquet file for parity check")
+    validate_parser.add_argument("--sqlite", "-s", default=None,
+                                 help="Path to SQLite DB file for parity check")
+    validate_parser.add_argument("--translations", "-t", default="config/genre_translations.json",
+                                 help="Path to genre translations JSON")
+
     args = parser.parse_args()
 
     if args.command == "run":
@@ -436,6 +455,15 @@ def main():
             auto_resolve_queue(args.queue, args.overrides, min_confidence=args.auto_resolve)
         else:
             interactive_review(args.queue, args.overrides, limit=args.limit)
+    elif args.command == "validate":
+        from utils.validate_dataset import validate_dataset
+        passed, _ = validate_dataset(
+            input_path=args.input,
+            parquet_path=args.parquet,
+            sqlite_path=args.sqlite,
+            translation_map=args.translations,
+        )
+        sys.exit(0 if passed else 1)
     else:
         parser.print_help()
         sys.exit(1)

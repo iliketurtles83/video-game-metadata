@@ -2,7 +2,6 @@ import ast
 import json
 import logging
 import re
-import multiprocessing as mp
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, List, Mapping, Optional, Sequence, cast
@@ -33,7 +32,7 @@ CANONICAL_SCHEMA = {
     'publisher': 'string',
     'players': 'string',
     'cooperative': 'boolean',
-    'rating': 'int64',
+    'rating': 'float64',
     'user_rating': 'float64',
     'version': 'string',
 }
@@ -241,52 +240,6 @@ def build_name_match_key(name: Any) -> Any:
         return np.nan
 
     return text
-
-
-def fuzzy_name_match_key(name: Any, threshold: int = 85) -> Any:
-    """Build a fuzzy match key for handling titles with minor variations.
-    
-    This function provides a more flexible matching approach for edge cases
-    where exact matching would fail due to minor variations in titles.
-    """
-    if pd.isna(name):
-        return name
-        
-    raw = str(name).strip()
-    if raw.lower() in {'', 'n/a', 'na', 'null', 'none'}:
-        return np.nan
-        
-    # For cases where we want to be more lenient with matching
-    return raw
-
-
-def fuzzy_match_names(name1: str, name2: str, method: str = 'ratio') -> float:
-    """Calculate fuzzy similarity between two names using different methods.
-    
-    Args:
-        name1: First name to compare
-        name2: Second name to compare
-        method: Matching method ('ratio', 'partial_ratio', 'token_sort_ratio', 'token_set_ratio')
-        
-    Returns:
-        Similarity score between 0 and 100
-    """
-    if pd.isna(name1) or pd.isna(name2):
-        return 0.0
-        
-    name1_clean = str(name1).strip()
-    name2_clean = str(name2).strip()
-    
-    if method == 'ratio':
-        return fuzz.ratio(name1_clean, name2_clean)
-    elif method == 'partial_ratio':
-        return fuzz.partial_ratio(name1_clean, name2_clean)
-    elif method == 'token_sort_ratio':
-        return fuzz.token_sort_ratio(name1_clean, name2_clean)
-    elif method == 'token_set_ratio':
-        return fuzz.token_set_ratio(name1_clean, name2_clean)
-    else:
-        return fuzz.ratio(name1_clean, name2_clean)
 
 
 def clean_filename(filename: Any) -> Any:
@@ -717,7 +670,8 @@ def normalize_source(
     if 'filename' in out.columns:
         out['filename'] = out['filename'].apply(clean_filename)
 
-    required_columns = list(dict.fromkeys([*target_columns, *key_columns]))
+    out["_source"] = config.name
+    required_columns = list(dict.fromkeys([*target_columns, *key_columns, "_source"]))
 
     # make up missing columns
     for column in required_columns:
@@ -817,7 +771,6 @@ def merge_into_main(
     key_columns: Sequence[str],
     resolver_map: Mapping[str, Any],
     schema: Optional[Mapping[str, str]] = None,
-    duplicate_detection_threshold: float = 0.8,
 ) -> pd.DataFrame:
     """Merge source_df into main_df with enhanced error handling and deduplication.
     
@@ -827,7 +780,6 @@ def merge_into_main(
         key_columns: Columns to use for matching.
         resolver_map: Custom resolver functions per column.
         schema: Schema to apply to merged result.
-        duplicate_detection_threshold: Threshold for fuzzy duplicate detection.
 
     Returns:
         Merged DataFrame with source data integrated.
@@ -863,7 +815,11 @@ def merge_into_main(
         for column in stacked.columns:
             if column in key_columns:
                 continue
-            agg_map[column] = resolver_map.get(column, pick_first)
+            if column == "_source":
+                from utils.resolvers import collect_unique
+                agg_map[column] = collect_unique
+            else:
+                agg_map[column] = resolver_map.get(column, pick_first)
 
         resolved = stacked.groupby(list(key_columns), as_index=False).agg(agg_map)
         return resolved
@@ -895,10 +851,6 @@ def identify_potential_duplicates(
     name_column: str = "name",
     threshold: float = 0.8,
     max_comparisons: int = 50000,
-    chunk_size: int = 1000,
-    use_multiprocessing: bool = False,
-    stream_results: bool = False,
-    memory_efficient: bool = True,
     platform_column: Optional[str] = "platform",
 ) -> list[tuple[int, int, float]]:
     """Identify potentially duplicate entries in a DataFrame based on name similarity.
@@ -912,10 +864,6 @@ def identify_potential_duplicates(
         name_column: Column name containing game titles (default: 'name').
         threshold: Minimum confidence threshold (default: 0.8).
         max_comparisons: Maximum number of comparisons to evaluate.
-        chunk_size: Retained for backward compatibility.
-        use_multiprocessing: Retained for backward compatibility.
-        stream_results: Retained for backward compatibility.
-        memory_efficient: Retained for backward compatibility.
         platform_column: Column name for platform partitioning (default: 'platform').
 
     Returns:
@@ -1057,8 +1005,11 @@ def collapse_by_name(
     for column in out.columns:
         if column == NAME_MATCH_KEY_COLUMN:
             continue
+        if column == "_source":
+            from utils.resolvers import collect_unique
+            agg_map[column] = collect_unique
         # developer/publisher: pick the most specific value (first encountered on tie)
-        if source_priority and column in ("developer", "publisher"):
+        elif source_priority and column in ("developer", "publisher"):
             agg_map[column] = prefer_specific
         # genres/platform: collect unique values from all sources
         elif source_priority and column in ("genres", "platform"):
@@ -1161,8 +1112,9 @@ def generate_audit_report(
     # Source contribution
     source_names = [main_config.name] + [sc.name for sc in source_configs]
     source_contribution = {
-        "rows_per_source": {name: 0 for name in source_names},
-        "new_rows_per_source": {name: 0 for name in source_names},
+        "note": "Per-source row counts require _source column tracking (not yet implemented)",
+        "total_sources": len(source_names),
+        "source_names": source_names,
     }
 
     report = {
@@ -1228,7 +1180,6 @@ def _run_fuzzy_dedup(
         name_column="name",
         threshold=review_queue_threshold,
         max_comparisons=50000,
-        use_multiprocessing=False,
     )
 
     parent_map: dict[int, int] = {}
@@ -1290,9 +1241,16 @@ def _run_fuzzy_dedup(
         for col in df.columns:
             if col in ("name", "platform"):
                 continue
-            res_fn = effective_res.get(col, pick_first)
             vk = df.at[keep_idx, col]
             vd = df.at[drop_idx, col]
+
+            if col == "_source":
+                from utils.resolvers import collect_unique
+                pair_s = pd.Series([vk, vd].copy())
+                df.at[keep_idx, col] = collect_unique(pair_s)
+                continue
+
+            res_fn = effective_res.get(col, pick_first)
 
             if pd.isna(vk) and pd.notna(vd):
                 df.at[keep_idx, col] = vd
@@ -1352,7 +1310,6 @@ def run_merge_pipeline(
     use_name_match_key: bool = True,
     collapse_platforms: bool = False,
     collapse_resolver_map: Optional[Mapping[str, Any]] = None,
-    duplicate_detection_threshold: float = 0.8,
     output_dir: Optional[str] = None,
 ) -> pd.DataFrame:
     """Orchestrate merging of multiple data sources into a canonical schema.
@@ -1372,7 +1329,6 @@ def run_merge_pipeline(
                     comma-separated list. If false, returns one row per (name, platform).
         collapse_resolver_map: Custom resolver map for the collapse step.
                     Defaults to ``collapse_resolver`` from resolvers.py.
-        duplicate_detection_threshold: Threshold for fuzzy name matching to detect potential duplicates.
         output_dir: Directory to write audit/report files (review_queue.csv, merge_audit.json).
 
     Returns:

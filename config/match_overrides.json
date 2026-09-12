@@ -1,3 +1,68 @@
 {
-  "//": "Human-curated game title match overrides. Format: {\"Platform\": {\"Variant Title\": \"Canonical Title\"}} or {\"Variant Title\": \"Canonical Title\"}"
+  "//": "Human-curated game title match overrides. Format: {\"Platform\": {\"Variant Title\": \"Canonical Title\"}}",
+  "3DO": {
+    "Buichi Terasawa's Takeru: Letter of the Law": "Takeru: Letter of the Law"
+  },
+  "Acorn Electron": {
+    "Confuzion": "Confusion"
+  },
+  "Amstrad CPC": {
+    "'Thing' Bounces Back": "Thing Bounces Back",
+    "Jack the Nipper... II in Coconut Capers": "Jack the Nipper II: In Coconut Capers",
+    "BreakThru": "Breakthru",
+    "CaveMania": "Cavemania",
+    "Chuckie Egg 2": "Chuckie Egg II",
+    "Top Cat Starring in Beverly Hills Cats": "Top Cat in Beverly Hills Cats",
+    "The Fourth Protocol: The Game": "The Fourth Protocol",
+    "PSI-5 Trading Company": "Psi 5 Trading Company",
+    "Rock 'n Wrestle": "Rock'n Wrestle",
+    "Silk Worm": "Silkworm",
+    "Snow Strike": "Snowstrike",
+    "On the oche": "On the Oche",
+    "Double Dragon II: The Revenge (Dro Soft)": "Double Dragon II: The Revenge",
+    "Double Dragon II: The Revenge (Melbourne House)": "Double Dragon II: The Revenge"
+  },
+  "Apple II": {
+    "Stuart Smith's Adventure Construction Set": "Adventure Construction Set",
+    "Will Harvey's Music Construction Set": "Music Construction Set",
+    "Mike Edwards' Realm of Impossibility": "Realm of Impossibility",
+    "Dunjonquest: Hellfire Warrior": "Hellfire Warrior",
+    "Dunjonquest: Morloc's Tower": "Morloc's Tower",
+    "Dunjonquest: The Datestones of Ryn": "Datestones of Ryn",
+    "Dunjonquest: Temple of Apshai": "Temple of Apshai",
+    "StarQuest: Rescue at Rigel": "Rescue at Rigel",
+    "Galactic Saga I: Galactic Empire": "Galactic Empire",
+    "Mystery Master: Murder by the Dozen": "Murder by the Dozen",
+    "The Rocky Horror Show Computer Game": "The Rocky Horror Show",
+    "David's Midnight Magic": "Midnight Magic",
+    "The Magic Candle: Volume 1": "The Magic Candle",
+    "Blood Suckers": "Bloodsuckers",
+    "ChipWits": "Chipwits",
+    "Dragon Fire": "Dragonfire",
+    "FaceMaker": "Facemaker",
+    "GFS Sorceress": "G.F.S. Sorceress",
+    "High Rise": "Highrise",
+    "Mr. DO!": "Mr. Do!",
+    "RobotWar": "Robotwar",
+    "StarCraft": "Starcraft",
+    "TaxMan": "Taxman",
+    "Up 'n Down": "Up'n Down",
+    "World Class Leader Board": "World Class Leaderboard",
+    "Raid over Moscow": "Raid Over Moscow"
+  },
+  "Apple IIGS": {
+    "Block Out": "Blockout",
+    "Space Quest: Chapter I: The Sarien Encounter": "Space Quest: The Sarien Encounter",
+    "J.R.R. Tolkien's War in Middle Earth": "War in Middle Earth",
+    "Where In The U.S.A. Is Carmen Sandiego?": "Where in the U.S.A. is Carmen Sandiego?"
+  },
+  "Arcade": {
+    "California Games (Mega-Tech)": "California Games",
+    "Galaxy Games BIOS Cartridge": "Galaxy Games BIOS",
+    "Galaxy Games StarPak Cartridge": "Galaxy Games StarPak",
+    "Galaxy Games StarPak 2 Cartridge": "Galaxy Games StarPak 2",
+    "Galaxy Games StarPak 3 Cartridge": "Galaxy Games StarPak 3",
+    "Galaxy Games StarPak 4 (prototype)": "Galaxy Games StarPak 4",
+    "Olympian Games (Russia)": "Olympian Games"
+  }
 }

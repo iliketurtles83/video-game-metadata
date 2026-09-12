@@ -45,6 +45,9 @@ python -m utils clean
 python -m utils review --status                     # Check queue status
 python -m utils review --auto-resolve 0.88          # Auto-approve high confidence pairs
 python -m utils review                              # Interactive terminal review
+
+# Validate dataset schema, value ranges, and date consistency
+python -m utils validate                            # Run validation checks
 ```
 
 Both `run` and `full` accept `--config` to point to a custom merge config:
@@ -96,15 +99,12 @@ Additional columns may exist depending on source coverage and enrichment rules.
 
 Two mapping files serve different responsibilities:
 
-### `utils/platform_mappings.json`
-- Used by `utils/merge_pipeline.py`
+### `utils/platform_registry.json`
+- Used by both `utils/merge_pipeline.py` and `utils/gamelist_parser.py`
 - Normalizes platform labels from metadata sources
-- Example: aliases like `PSP` and `PlayStation Portable` resolve to one canonical platform
-
-### `utils/gamelist_folder_mappings.json`
-- Used by `utils/gamelist_parser.py`
 - Maps folder keys (for example `psx`, `nes`, `sfc`) to canonical platform names
 - Ensures parsed `lists/<platform>/` data aligns with the merged dataset
+- Example: aliases like `PSP` and `PlayStation Portable` resolve to one canonical platform
 
 ## Key Modules
 

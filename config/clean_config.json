@@ -24,7 +24,7 @@
             "enabled": true,
             // Path to a JSON file with genre translations (e.g., Portuguese -> English)
             // Leave null to skip translation; set to "config/genre_translations.json" to enable
-            "map_path": null
+            "map_path": "config/genre_translations.json"
         },
         "normalize_genres": {
             "enabled": true,
@@ -42,9 +42,22 @@
             "enabled": true,
             "description": "If cooperative is missing and players == 1, set cooperative = False"
         },
+        "clean_placeholder_dates": {
+            "enabled": true,
+            "description": "Drop known placeholder sentinel dates (e.g. 1980-01-01 on modern platforms)"
+        },
+        "clean_release_years": {
+            "enabled": true,
+            "description": "Drop invalid truncated release years (< 1900 or > 2030)"
+        },
         "derive_year": {
             "enabled": true,
-            "description": "Fill missing release_year from release_date"
+            "reconcile_conflicts": true,
+            "description": "Align release_year with release_date and fill missing values"
+        },
+        "normalize_ratings": {
+            "enabled": true,
+            "description": "Normalize rating columns from various scales (0-100, 0-1) to 0-10"
         },
         "round_ratings": {
             "enabled": true,
