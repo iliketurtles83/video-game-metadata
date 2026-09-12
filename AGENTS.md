@@ -10,8 +10,8 @@ Video game metadata merge pipeline: ingest CSV/XML sources → normalize schema/
 3. `notebooks/03-data_analysis.ipynb` — anomaly detection on merged data (missingness, platform naming, name quality, genre issues, date inconsistencies, duplicates) — EDA for downstream uses (gamelist updater, ML recommender, online database)
 4. `notebooks/04-data_cleaning.ipynb` — post-merge cleanup and normalization informed by analysis findings
 
-**Tests:** `python -m pytest tests/ -v` (8 tests, all unit tests on pipeline functions)
-**Standalone test:** `python utils/test_pipeline_comprehensive.py` (pytest-style classes, runs outside pytest)
+**Tests:** `python -m pytest tests/ -v` (95 tests across normalization, resolvers, fuzzy dedup, exports)
+**Standalone test:** `python utils/test_pipeline_comprehensive.py` (runs outside pytest)
 
 ## Architecture
 
@@ -19,17 +19,22 @@ Video game metadata merge pipeline: ingest CSV/XML sources → normalize schema/
 csv/          ← raw & processed CSVs (gitignored *.csv)
   combined.csv, all_games.csv, game_dataset_cleaned.csv
   launchbox.csv, mobygames.csv, dat_database_*.csv, gamelist_parsed.csv, games_on_gametdb.csv, recalbox_gamelist.csv
+config/       ← pipeline configuration JSON files
+  merge_config.json   ← source paths, transforms, merge settings
+  clean_config.json   ← post-merge cleaning pipeline settings
+  match_overrides.json ← human-curated title match overrides from review queue
 utils/        ← pipeline modules
   merge_pipeline.py   ← SourceConfig, run_merge_pipeline(), canonical schema, dedup, platform normalization
-  resolvers.py        ← field merge strategies (pick_first, pick_longer, collect_unique, any_truthy, weighted_avg, prefer_specific)
+  pipeline.py         ← CLI runner (run, clean, full, review)
+  resolvers.py        ← field merge strategies (pick_first, pick_longer, collect_unique, any_truthy, mean_rating, prefer_specific)
   data_cleaning.py    ← genre normalization, player parsing, date normalization, release year derivation
   gamelist_parser.py  ← parse lists/<platform>/gamelist.xml into DataFrames
-  csv_export.py       ← write DataFrames to CSV with type coercion
-  platform_mappings.json       ← CSV source platform aliases → canonical names
-  gamelist_folder_mappings.json ← folder names → canonical platform names
-output/         ← generated artifacts (merged_df.pkl, gitignored)
+  csv_export.py       ← write DataFrames to CSV, Parquet, and SQLite with indices
+  review_queue.py     ← interactive & automated resolution of ambiguous fuzzy duplicates
+  platform_registry.json ← unified canonical platform names & aliases
+output/         ← generated artifacts (merged_df.pkl, review_queue.csv, gitignored)
 scripts/        ← export_tables.sh (mdb-export for ARRM databases)
-tests/          ← pytest test suite
+tests/          ← pytest test suite (test_matching.py, test_high_impact.py, etc.)
 ```
 
 ## Canonical schema (merge_pipeline.py)

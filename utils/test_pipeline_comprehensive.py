@@ -4,6 +4,12 @@ Comprehensive test suite for the video game metadata pipeline.
 Tests edge cases, international titles, and complex naming conventions.
 """
 
+import sys
+from pathlib import Path
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any
@@ -17,7 +23,7 @@ from utils.merge_pipeline import (
 from utils.resolvers import (
     collect_unique,
     collect_unique_ordered,
-    any_truthy_priority
+    mean_rating
 )
 
 
@@ -176,15 +182,15 @@ class TestMultiValueFieldHandling:
         assert 'action' in str(result)
         assert 'adventure' in str(result)
         
-    def test_any_truthy_priority(self):
-        """Test truthy resolution with priority."""
-        values = ['false', 'true', 'yes']
-        result = any_truthy_priority(pd.Series(values), ['source1', 'source2'])
-        assert result is True
+    def test_mean_rating(self):
+        """Test arithmetic mean of numeric values."""
+        values = [8.0, 9.0, 7.0]
+        result = mean_rating(pd.Series(values))
+        assert result == 8.0
         
-        values = ['false', 'no', '0']
-        result = any_truthy_priority(pd.Series(values), ['source1', 'source2'])
-        assert result is False
+        values = [10.0]
+        result = mean_rating(pd.Series(values))
+        assert result == 10.0
 
 
 class TestIntegration:

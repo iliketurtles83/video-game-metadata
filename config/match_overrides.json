@@ -1,0 +1,3 @@
+{
+  "//": "Human-curated game title match overrides. Format: {\"Platform\": {\"Variant Title\": \"Canonical Title\"}} or {\"Variant Title\": \"Canonical Title\"}"
+}

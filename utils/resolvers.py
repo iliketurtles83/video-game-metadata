@@ -102,87 +102,7 @@ def any_truthy(series):
     return np.nan
 
 
-def any_truthy_priority(series, source_priority: List[str]):
-    """Handle boolean fields with priority-based resolution.
-    
-    Args:
-        series: Series of values to process
-        source_priority: List of source names ordered by priority
-    """
-    # Get all values (not just truthy ones)
-    values = []
-    for value in series.dropna():
-        values.append(value)
-    
-    # If we have any truthy values, return True
-    for value in values:
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"true", "yes", "y", "1", "t"}:
-                return True
-        elif isinstance(value, (int, float)):
-            if isinstance(value, float) and np.isnan(value):
-                continue
-            if value != 0:
-                return True
-        elif bool(value):
-            return True
-    
-    # If we have any falsy values, return False
-    for value in values:
-        if isinstance(value, str):
-            normalized = value.strip().lower()
-            if normalized in {"false", "no", "n", "0", "f"}:
-                return False
-        elif isinstance(value, (int, float)):
-            if isinstance(value, float) and np.isnan(value):
-                continue
-            if value == 0:
-                return False
-        elif not bool(value):
-            return False
-    
-    # If no truthy or falsy values found, return np.nan
-    return np.nan
-
-
-def resolve_with_priority(series, source_priority: List[str], default_resolver=None):
-    """Resolve fields with priority for certain data sources.
-    
-    Args:
-        series: Series of values to process
-        source_priority: List of source names ordered by priority
-        default_resolver: Function to use if no priority-based resolution is needed
-    """
-    # Simple approach: if there's a single source or no conflict, use pick_first
-    # For multiple sources, we'll prioritize based on source_priority order
-    values = _clean_strings(series)
-    if not values:
-        return np.nan
-    
-    # If we have only one value or all values are the same, return it
-    if len(set(values)) == 1:
-        return values[0]
-    
-    # For priority-based resolution, we'd want to return the first non-null value
-    # from the priority-sorted sources if we can determine source information
-    # For now, return the first value
-    return values[0] if values else np.nan
-
-
-def _resolve_by_source_priority(series, source_priority: List[str]):
-    """Internal function to resolve values based on source priority.
-    
-    This is a placeholder for more sophisticated source-aware resolution.
-    """
-    values = []
-    for value in series.dropna():
-        values.append(value)
-    
-    return values[0] if values else np.nan
-
-
-def weighted_avg(series):
+def mean_rating(series):
     """Compute the arithmetic mean of non-null numeric values.
     
     Args:
@@ -212,17 +132,16 @@ def prefer_specific(series):
     Returns:
         The most specific value, or np.nan if no values exist.
     """
-    values = series.dropna().tolist()
+    values = _clean_strings(series)
     if not values:
         return np.nan
     
     def part_count(v):
-        return len(re.split(r"[,;]", str(v)))
+        return len(re.split(r"[,;]", v))
     
-    best = str(values[0]).strip()
+    best = values[0]
     best_count = part_count(best)
-    for raw in values[1:]:
-        v = str(raw).strip()
+    for v in values[1:]:
         count = part_count(v)
         if count > best_count:
             best, best_count = v, count
@@ -236,14 +155,14 @@ resolver = {
     "filename": pick_first,
     "summary": pick_longer,
     "release_date": "min",
-    "release_year": "max",
+    "release_year": "min",
     "genres": collect_unique,
     "developer": prefer_specific,
     "publisher": prefer_specific,
     "players": pick_first,
     "cooperative": any_truthy,
-    "rating": weighted_avg,
-    "user_rating": weighted_avg,
+    "rating": mean_rating,
+    "user_rating": mean_rating,
 }
 
 # Resolver dict for collapsing by game name (platforms become a list)

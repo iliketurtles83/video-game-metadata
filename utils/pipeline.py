@@ -24,7 +24,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from utils.merge_pipeline import SourceConfig, run_merge_pipeline
 from utils.gamelist_parser import load_all_gamelists
 from utils.data_cleaning import run_cleaning_pipeline
-from utils.csv_export import write_to_csv
+from utils.csv_export import write_to_csv, write_to_parquet, write_to_sqlite
 from utils.merge_pipeline import CANONICAL_SCHEMA
 
 
@@ -189,7 +189,7 @@ def build_sources(config: dict, base_path: str = "."):
 # Pipeline execution
 # ---------------------------------------------------------------------------
 
-def run_merge(config_path: str, output_dir: Optional[str] = None):
+def run_merge(config_path: str, output_dir: Optional[str] = None, export_all: bool = False):
     """Run the full merge pipeline from a config file."""
     config = load_merge_config(config_path)
     base_path = str(Path(config_path).parent.parent)
@@ -230,10 +230,33 @@ def run_merge(config_path: str, output_dir: Optional[str] = None):
         write_to_csv(merged_df, merged_csv, CANONICAL_SCHEMA)
         print(f"Merged CSV saved to: {merged_csv}")
 
+    # Save merged Parquet
+    merged_parquet = output_cfg.get("merged_parquet")
+    if export_all and not merged_parquet and merged_csv:
+        merged_parquet = str(Path(merged_csv).with_suffix(".parquet"))
+    if merged_parquet:
+        Path(merged_parquet).parent.mkdir(parents=True, exist_ok=True)
+        write_to_parquet(merged_df, merged_parquet, CANONICAL_SCHEMA)
+        print(f"Merged Parquet saved to: {merged_parquet}")
+
+    # Save merged SQLite
+    merged_sqlite = output_cfg.get("merged_sqlite")
+    if export_all and not merged_sqlite and merged_csv:
+        merged_sqlite = str(Path(merged_csv).with_suffix(".db"))
+    if merged_sqlite:
+        Path(merged_sqlite).parent.mkdir(parents=True, exist_ok=True)
+        write_to_sqlite(merged_df, merged_sqlite, table_name="merged_games", schema=CANONICAL_SCHEMA)
+        print(f"Merged SQLite saved to: {merged_sqlite}")
+
     return merged_df
 
 
-def run_clean(config_path: Optional[str] = None, input_pkl: Optional[str] = None, merged_df: Optional[pd.DataFrame] = None):
+def run_clean(
+    config_path: Optional[str] = None,
+    input_pkl: Optional[str] = None,
+    merged_df: Optional[pd.DataFrame] = None,
+    export_all: bool = False,
+):
     """Run the cleaning pipeline."""
     if merged_df is None:
         if input_pkl is None:
@@ -293,6 +316,24 @@ def run_clean(config_path: Optional[str] = None, input_pkl: Optional[str] = None
     write_to_csv(cleaned_df, cleaned_csv, CANONICAL_SCHEMA)
     print(f"Cleaned CSV saved to: {cleaned_csv} ({len(cleaned_df)} rows)")
 
+    # Save cleaned Parquet
+    cleaned_parquet = output_cfg.get("cleaned_parquet")
+    if export_all and not cleaned_parquet and cleaned_csv:
+        cleaned_parquet = str(Path(cleaned_csv).with_suffix(".parquet"))
+    if cleaned_parquet:
+        Path(cleaned_parquet).parent.mkdir(parents=True, exist_ok=True)
+        write_to_parquet(cleaned_df, cleaned_parquet, CANONICAL_SCHEMA)
+        print(f"Cleaned Parquet saved to: {cleaned_parquet}")
+
+    # Save cleaned SQLite
+    cleaned_sqlite = output_cfg.get("cleaned_sqlite")
+    if export_all and not cleaned_sqlite and cleaned_csv:
+        cleaned_sqlite = str(Path(cleaned_csv).with_suffix(".db"))
+    if cleaned_sqlite:
+        Path(cleaned_sqlite).parent.mkdir(parents=True, exist_ok=True)
+        write_to_sqlite(cleaned_df, cleaned_sqlite, table_name="cleaned_games", schema=CANONICAL_SCHEMA)
+        print(f"Cleaned SQLite saved to: {cleaned_sqlite}")
+
     return cleaned_df
 
 
@@ -327,7 +368,7 @@ def _default_clean_config() -> dict:
 # ---------------------------------------------------------------------------
 
 def main():
-    """CLI entry point for `python -m utils pipeline run|clean`."""
+    """CLI entry point for `python -m utils pipeline run|clean|full|review`."""
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -342,6 +383,8 @@ def main():
                             help="Path to merge config JSON (default: config/merge_config.json)")
     run_parser.add_argument("--output-dir", "-o", default=None,
                             help="Override output directory for audit files")
+    run_parser.add_argument("--export-all", "-e", action="store_true",
+                            help="Export Parquet and SQLite databases alongside CSV")
 
     # --- clean ---
     clean_parser = subparsers.add_parser("clean", help="Run cleaning pipeline")
@@ -349,6 +392,8 @@ def main():
                               help="Path to clean config JSON (optional, uses defaults if omitted)")
     clean_parser.add_argument("--input", "-i", default=None,
                               help="Path to merged DataFrame pickle (default: output/merged_df.pkl)")
+    clean_parser.add_argument("--export-all", "-e", action="store_true",
+                              help="Export Parquet and SQLite databases alongside CSV")
 
     # --- full (merge + clean in one shot) ---
     full_parser = subparsers.add_parser("full", help="Run merge + clean in one shot")
@@ -358,16 +403,39 @@ def main():
                              help="Path to clean config JSON (optional)")
     full_parser.add_argument("--output-dir", "-o", default=None,
                              help="Override output directory for audit files")
+    full_parser.add_argument("--export-all", "-e", action="store_true",
+                             help="Export Parquet and SQLite databases alongside CSV")
+
+    # --- review (interactive or automated review queue resolution) ---
+    review_parser = subparsers.add_parser("review", help="Inspect and resolve ambiguous fuzzy duplicates")
+    review_parser.add_argument("--queue", "-q", default="output/review_queue.csv",
+                               help="Path to review_queue.csv (default: output/review_queue.csv)")
+    review_parser.add_argument("--overrides", default="config/match_overrides.json",
+                               help="Path to match_overrides.json (default: config/match_overrides.json)")
+    review_parser.add_argument("--status", action="store_true",
+                               help="Display review queue summary stats without modifying files")
+    review_parser.add_argument("--auto-resolve", type=float, default=None, metavar="THRESHOLD",
+                               help="Auto-approve pairs with confidence >= THRESHOLD (e.g. 0.88)")
+    review_parser.add_argument("--limit", type=int, default=None,
+                               help="Max number of items to review interactively")
 
     args = parser.parse_args()
 
     if args.command == "run":
-        run_merge(args.config, args.output_dir)
+        run_merge(args.config, args.output_dir, export_all=args.export_all)
     elif args.command == "clean":
-        run_clean(args.config, args.input)
+        run_clean(args.config, args.input, export_all=args.export_all)
     elif args.command == "full":
-        merged_df = run_merge(args.merge_config, args.output_dir)
-        run_clean(args.clean_config, merged_df=merged_df)
+        merged_df = run_merge(args.merge_config, args.output_dir, export_all=args.export_all)
+        run_clean(args.clean_config, merged_df=merged_df, export_all=args.export_all)
+    elif args.command == "review":
+        from utils.review_queue import get_review_status, auto_resolve_queue, interactive_review
+        if args.status:
+            get_review_status(args.queue)
+        elif args.auto_resolve is not None:
+            auto_resolve_queue(args.queue, args.overrides, min_confidence=args.auto_resolve)
+        else:
+            interactive_review(args.queue, args.overrides, limit=args.limit)
     else:
         parser.print_help()
         sys.exit(1)

@@ -32,22 +32,31 @@ Run the full pipeline (merge → clean → export) from the repo root:
 # Full pipeline: merge + clean in one shot
 python -m utils full
 
+# Full pipeline with Parquet and SQLite DB exports
+python -m utils full --export-all
+
 # Merge only (produces merged_df.pkl + merged CSV)
 python -m utils run
 
 # Clean only (reads merged_df.pkl, applies cleaning, exports CSV)
 python -m utils clean
+
+# Inspect and resolve ambiguous fuzzy matches (review queue)
+python -m utils review --status                     # Check queue status
+python -m utils review --auto-resolve 0.88          # Auto-approve high confidence pairs
+python -m utils review                              # Interactive terminal review
 ```
 
 Both `run` and `full` accept `--config` to point to a custom merge config:
 
 ```bash
-python -m utils full --config config/merge_config.json
+python -m utils full --config config/merge_config.json --export-all
 ```
 
 Config files live in `config/`:
 - `config/merge_config.json` — source paths, column mappings, pipeline settings
 - `config/clean_config.json` — cleaning steps, column names, genre translation maps
+- `config/match_overrides.json` — human-curated title match overrides saved from review queue
 
 See the config files for fully commented examples of every option.
 

@@ -20,7 +20,7 @@ from utils.merge_pipeline import (
 from utils.resolvers import (
     collect_unique,
     collect_unique_ordered,
-    any_truthy_priority
+    mean_rating
 )
 
 
@@ -122,11 +122,11 @@ def test_multi_value_handling():
     assert 'rpg' in str(result)
     print("✓ Ordered unique collection works")
     
-    # Test truthy resolution
-    values = ['false', 'true', 'yes']
-    result = any_truthy_priority(pd.Series(values), ['source1', 'source2'])
-    assert result is True
-    print("✓ Truthy resolution works")
+    # Test mean rating
+    values = [8.0, 9.0, 7.0]
+    result = mean_rating(pd.Series(values))
+    assert result == 8.0
+    print("✓ Mean rating works")
 
 
 def test_integration():

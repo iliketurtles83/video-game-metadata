@@ -172,12 +172,13 @@ def clean_game_name(name: str) -> str:
     # Remove extra whitespace
     name = ' '.join(name.split())
     
-    # Normalize all-caps names to title case
-    if name.isupper() and len(name) > 1:
+    # Normalize all-caps or all-lowercase names to title case
+    if (name.isupper() or name.islower()) and len(name) > 1:
         name = name.title()
 
     # Normalize common sequel roman numerals (e.g., Ii -> II)
     name = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, name)
+    name = re.sub(r"(')([A-Z])\b", lambda m: m.group(1) + m.group(2).lower(), name)
     
     # Handle empty results more gracefully
     cleaned_name = name.strip()
@@ -221,6 +222,12 @@ def build_name_match_key(name: Any) -> Any:
     text = re.sub(r"[’`]+", "", text)
     text = re.sub(r"[^\w\s&'-]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+
+    # Normalize casing while preserving meaningful punctuation and roman numerals
+    if (text.isupper() or text.islower()) and len(text) > 1:
+        text = text.title()
+    text = re.sub(r'\b[IVXLCDMivxlcdm]+\b', _roman_replacer, text)
+    text = re.sub(r"(')([A-Z])\b", lambda m: m.group(1) + m.group(2).lower(), text)
 
     # Handle empty results gracefully
     if not text:
@@ -353,6 +360,41 @@ def get_similarity_cache_size():
     """Get the current size of the similarity score cache."""
     return len(_similarity_cache)
 
+ROMAN_NUMERAL_VALUES = {
+    'i': 1, 'ii': 2, 'iii': 3, 'iv': 4, 'v': 5, 'vi': 6, 'vii': 7,
+    'viii': 8, 'ix': 9, 'x': 10, 'xi': 11, 'xii': 12, 'xiii': 13,
+    'xiv': 14, 'xv': 15, 'xvi': 16, 'xvii': 17, 'xviii': 18, 'xix': 19, 'xx': 20,
+}
+
+
+def _extract_sequel_numbers(name: str) -> list[int]:
+    """Extract trailing/standalone sequel numbers (Arabic digits or Roman numerals)."""
+    clean = re.sub(r'\s*\([^\)]*\)', '', str(name))
+    tokens = re.findall(r'\b(?:\d+|[ivxlcdm]+)\b', clean.lower())
+    nums = []
+    for t in tokens:
+        if t.isdigit():
+            # ignore 4-digit years (>= 1970)
+            if len(t) == 4 and int(t) >= 1970:
+                continue
+            nums.append(int(t))
+        elif t in ROMAN_NUMERAL_VALUES:
+            nums.append(ROMAN_NUMERAL_VALUES[t])
+    return nums
+
+
+def _check_sequel_mismatch(name1: str, name2: str) -> bool:
+    """Return True if two titles have conflicting sequel numbers (e.g. SMB vs SMB 2)."""
+    n1 = _extract_sequel_numbers(name1)
+    n2 = _extract_sequel_numbers(name2)
+    if n1 == n2:
+        return False
+    # Allow [1] vs [] (e.g., 'Mega Man' vs 'Mega Man I')
+    if (n1 == [1] and n2 == []) or (n1 == [] and n2 == [1]):
+        return False
+    return n1 != n2
+
+
 def get_name_confidence_score(name1: str, name2: str) -> dict:
     """Calculate various confidence scores for name comparison.
     
@@ -422,6 +464,10 @@ def get_name_confidence_score(name1: str, name2: str) -> dict:
     
     # Calculate overall confidence (weighted average)
     confidence = (ratio * 0.3 + partial_ratio * 0.2 + token_sort_ratio * 0.25 + token_set_ratio * 0.25) / 100
+
+    # Penalize distinct sequels (e.g., "Super Mario Bros." vs "Super Mario Bros. 2")
+    if _check_sequel_mismatch(name1_clean, name2_clean):
+        confidence = min(confidence * 0.5, 0.49)
     
     # Early termination: If confidence is very low, return early
     if confidence < 0.1:  # Very low confidence threshold
@@ -562,6 +608,19 @@ def load_source(config: SourceConfig) -> pd.DataFrame:
     return frame
 
 
+def load_match_overrides(overrides_path: str | Path = "config/match_overrides.json") -> dict:
+    """Load human-curated title match overrides mapping variant names to canonical names."""
+    path = Path(overrides_path)
+    if not path.exists():
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logging.warning("Failed to load match overrides from %s: %s", path, e)
+        return {}
+
+
 def normalize_source(
     df: pd.DataFrame,
     config: SourceConfig,
@@ -613,6 +672,21 @@ def normalize_source(
         original_name = out['name'].copy()
         original_non_null_mask = original_name.notna()
         out['name'] = out['name'].apply(lambda x: clean_game_name(x) if pd.notna(x) else x)
+
+        # Apply human-curated match overrides if available
+        overrides = load_match_overrides()
+        if overrides:
+            if "platform" in out.columns:
+                for plat, name_map in overrides.items():
+                    if isinstance(name_map, dict):
+                        canon_plat = normalize_platform(plat)
+                        mask = (out["platform"] == plat) | (out["platform"] == canon_plat)
+                        if mask.any():
+                            out.loc[mask, "name"] = out.loc[mask, "name"].replace(name_map)
+            global_map = {k: v for k, v in overrides.items() if isinstance(v, str)}
+            if global_map:
+                out["name"] = out["name"].replace(global_map)
+
         name_missing_mask = out['name'].astype(str).str.strip().str.lower().isin(
             {'', 'n/a', 'na', 'null', 'none'}
         )
@@ -816,274 +890,137 @@ def prepare_source(
     return validated
 
 
-def _process_chunk(args):
-    """Process a chunk of data for duplicate detection in parallel.
-    
-    This version is more memory-efficient by avoiding unnecessary copies
-    and using lazy evaluation where appropriate.
-    """
-    chunk, name_column, threshold = args
-    local_duplicates = []
-    
-    # Group names within this chunk efficiently
-    name_groups = {}
-    
-    # Normalize names and group by a more robust approach
-    # Process names directly without unnecessary intermediate copies
-    for i in range(len(chunk)):
-        name = chunk.iloc[i][name_column]
-        if pd.isna(name):
-            continue
-            
-        # Use the same normalization approach as build_name_match_key for consistency
-        normalized_name = str(name).strip()
-        
-        # Apply the same normalization steps as build_name_match_key for consistency
-        # Replace various hyphens with standard spaces
-        text = re.sub(r"[‐‑–—-]+", " ", normalized_name)
-        
-        # Remove control characters that might break matching
-        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-        
-        # Normalize punctuation and whitespace
-        # Preserve &, -, and apostrophes (meaningful in titles like "Game & Watch", "Super Mario Bros.", "Donkey Kong")
-        text = re.sub(r"[:/]+", " ", text)
-        text = re.sub(r"[’`]+", "", text)
-        text = re.sub(r"[^\w\s&'-]+", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        
-        # Create a grouping key that's more robust for grouping
-        # Using first 3, middle 4, and last 3 characters with length for better distribution
-        if len(text) >= 10:
-            grouping_key = text[:3] + text[len(text)//2-2:len(text)//2+2] + text[-3:] + str(len(text))
-        elif len(text) >= 6:
-            grouping_key = text[:3] + text[-3:] + str(len(text))
-        else:
-            grouping_key = text + str(len(text))
-        
-        if grouping_key not in name_groups:
-            name_groups[grouping_key] = []
-        name_groups[grouping_key].append(i)
-    
-    # Check for duplicates within this chunk
-    for group in name_groups.values():
-        if len(group) > 1:
-            # Compare each item in the group with others
-            for i in range(len(group)):
-                idx1 = group[i]
-                name1 = chunk.iloc[idx1][name_column]
-                
-                # Only compare with remaining items in group to avoid duplicate comparisons
-                for j in range(i + 1, len(group)):
-                    idx2 = group[j]
-                    name2 = chunk.iloc[idx2][name_column]
-                    
-                    # Use our improved matching logic - lazy evaluation for expensive operations
-                    if is_potentially_similar_name(name1, name2, threshold):
-                        scores = get_name_confidence_score(name1, name2)
-                        local_duplicates.append((idx1, idx2, scores['confidence']))
-    
-    return local_duplicates
-
-
-def identify_potential_duplicates(df: pd.DataFrame, name_column: str = "name", 
-                                  threshold: float = 0.8, max_comparisons: int = 10000, 
-                                  chunk_size: int = 1000, use_multiprocessing: bool = True,
-                                  stream_results: bool = False, memory_efficient: bool = True) -> list:
+def identify_potential_duplicates(
+    df: pd.DataFrame,
+    name_column: str = "name",
+    threshold: float = 0.8,
+    max_comparisons: int = 50000,
+    chunk_size: int = 1000,
+    use_multiprocessing: bool = False,
+    stream_results: bool = False,
+    memory_efficient: bool = True,
+    platform_column: Optional[str] = "platform",
+) -> list[tuple[int, int, float]]:
     """Identify potentially duplicate entries in a DataFrame based on name similarity.
-    
-    Uses optimized data structures for improved efficiency over brute-force O(n^2) comparison.
-    Pre-processes and indexes games by name variations for faster lookup, 
-    uses sets for fast membership testing, and implements efficient duplicate management.
-    Includes maximum comparison limits to prevent excessive computation.
-    Implements chunked processing for large datasets and optional multiprocessing.
-    Memory-efficient implementation with streaming and lazy evaluation options.
-    
+
+    Uses token-and-prefix inverted indexing partitioned by platform to prevent O(N^2)
+    explosion while ensuring titles with differing lengths (e.g. subtitles, editions)
+    are accurately compared without strict length-based blocking.
+
     Args:
-        df: DataFrame to analyze
-        name_column: Name of the column to compare (default: 'name')
-        threshold: Similarity threshold for considering duplicates (default: 0.8)
-        max_comparisons: Maximum number of comparisons to prevent excessive computation (default: 10000)
-        chunk_size: Size of chunks for processing (default: 1000)
-        use_multiprocessing: Whether to use multiprocessing for chunk processing (default: True)
-        stream_results: If True, yield results instead of collecting all at once (default: False)
-        memory_efficient: If True, uses memory-efficient processing methods (default: True)
-        
+        df: DataFrame to analyze.
+        name_column: Column name containing game titles (default: 'name').
+        threshold: Minimum confidence threshold (default: 0.8).
+        max_comparisons: Maximum number of comparisons to evaluate.
+        chunk_size: Retained for backward compatibility.
+        use_multiprocessing: Retained for backward compatibility.
+        stream_results: Retained for backward compatibility.
+        memory_efficient: Retained for backward compatibility.
+        platform_column: Column name for platform partitioning (default: 'platform').
+
     Returns:
-        List of tuples containing (index1, index2, similarity_score) for potential duplicates
+        List of tuples (index1, index2, confidence) for potential duplicates.
     """
-    # If we want to stream results or memory is a concern, use different approach
-    if stream_results or memory_efficient:
-        # For streaming or memory-efficient processing, process data without collecting all results
-        # This is a simplified approach that could be enhanced for true streaming
-        # For now, we'll maintain the existing logic but with optimizations
-        
-        # If dataset is small, use standard approach
-        if len(df) <= chunk_size or not use_multiprocessing:
-            # Fall back to the original approach for smaller datasets
-            return _identify_potential_duplicates_standard(df, name_column, threshold, max_comparisons)
-        
-        # For larger datasets, use chunked processing with parallel execution
-        chunks = []
-        for i in range(0, len(df), chunk_size):
-            chunk = df.iloc[i:i+chunk_size]
-            chunks.append(chunk)
-        
-        # Process chunks in parallel if multiprocessing is enabled
-        if len(chunks) > 1 and use_multiprocessing:
-            # Prepare arguments for parallel processing
-            chunk_args = [(chunk, name_column, threshold) for chunk in chunks]
-            
-            # Use multiprocessing pool for parallel processing
-            with mp.Pool() as pool:
-                results = pool.map(_process_chunk, chunk_args)
-            
-            # Combine results from all chunks
-            potential_duplicates = []
-            for result in results:
-                potential_duplicates.extend(result)
-        else:
-            # Fallback to single-threaded processing
-            potential_duplicates = []
-            for chunk in chunks:
-                result = _process_chunk((chunk, name_column, threshold))
-                potential_duplicates.extend(result)
-        
-        # Apply maximum comparison limit
-        if len(potential_duplicates) > max_comparisons:
-            print(f"Warning: Found {len(potential_duplicates)} potential duplicates, "
-                  f"exceeding maximum allowed ({max_comparisons}).")
-            # Truncate to max_comparisons (though this might not be ideal for final results)
-            # We'll let the user handle this at the calling level
-        
-        return potential_duplicates
+    if df.empty or name_column not in df.columns:
+        return []
+
+    # Work with integer positional indices
+    df_work = df.reset_index(drop=True)
+    potential_duplicates: list[tuple[int, int, float]] = []
+    checked_pairs: set[tuple[int, int]] = set()
+
+    stopwords = {'the', 'and', 'for', 'edition', 'version', 'game', 'deluxe', 'remastered'}
+
+    # Partition by platform if available to prevent comparing games across distinct platforms
+    has_platform = platform_column and platform_column in df_work.columns
+    if has_platform:
+        platform_groups = df_work.groupby(platform_column, dropna=False).indices
     else:
-        # Standard behavior
-        potential_duplicates = []
-        
-        # If dataset is small, use standard approach
-        if len(df) <= chunk_size or not use_multiprocessing:
-            # Fall back to the original approach for smaller datasets
-            return _identify_potential_duplicates_standard(df, name_column, threshold, max_comparisons)
-        
-        # For larger datasets, use chunked processing with parallel execution
-        chunks = []
-        for i in range(0, len(df), chunk_size):
-            chunk = df.iloc[i:i+chunk_size]
-            chunks.append(chunk)
-        
-        # Process chunks in parallel if multiprocessing is enabled
-        if len(chunks) > 1 and use_multiprocessing:
-            # Prepare arguments for parallel processing
-            chunk_args = [(chunk, name_column, threshold) for chunk in chunks]
-            
-            # Use multiprocessing pool for parallel processing
-            with mp.Pool() as pool:
-                results = pool.map(_process_chunk, chunk_args)
-            
-            # Combine results from all chunks
-            for result in results:
-                potential_duplicates.extend(result)
-        else:
-            # Fallback to single-threaded processing
-            for chunk in chunks:
-                result = _process_chunk((chunk, name_column, threshold))
-                potential_duplicates.extend(result)
-        
-        # Apply maximum comparison limit
-        if len(potential_duplicates) > max_comparisons:
-            print(f"Warning: Found {len(potential_duplicates)} potential duplicates, "
-                  f"exceeding maximum allowed ({max_comparisons}).")
-            # Truncate to max_comparisons (though this might not be ideal for final results)
-            # We'll let the user handle this at the calling level
-        
-        return potential_duplicates
+        platform_groups = {"all": list(range(len(df_work)))}
 
+    comparisons_done = 0
 
-def _identify_potential_duplicates_standard(df: pd.DataFrame, name_column: str = "name", 
-                                            threshold: float = 0.8, max_comparisons: int = 10000) -> list:
-    """Standard implementation of duplicate detection for smaller datasets."""
-    potential_duplicates = []
-    
-    # Create a copy without the name_match_key column to avoid interference
-    df_copy = df.copy()
-    
-    # Create hash map to group entries by normalized name variations
-    name_groups = {}
-    
-    # Pre-process names and build index for faster lookup
-    name_index = {}  # For fast membership testing
-    
-    # Normalize names and group by a more robust approach
-    for i in range(len(df_copy)):
-        name = df_copy.iloc[i][name_column]
-        if pd.isna(name):
+    for platform_name, indices in platform_groups.items():
+        if len(indices) < 2:
             continue
-            
-        # Use the same normalization approach as build_name_match_key for consistency
-        normalized_name = str(name).strip()
-        
-        # Apply the same normalization steps as build_name_match_key for consistency
-        # Replace various hyphens with standard spaces
-        text = re.sub(r"[‐‑–—-]+", " ", normalized_name)
-        
-        # Remove control characters that might break matching
-        text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-        
-        # Normalize punctuation and whitespace
-        # Preserve &, -, and apostrophes (meaningful in titles like "Game & Watch", "Super Mario Bros.", "Donkey Kong")
-        text = re.sub(r"[:/]+", " ", text)
-        text = re.sub(r"[’`]+", "", text)
-        text = re.sub(r"[^\w\s&'-]+", " ", text)
-        text = re.sub(r"\s+", " ", text).strip()
-        
-        # Create a grouping key that's more robust for grouping
-        # Using first 3, middle 4, and last 3 characters with length for better distribution
-        if len(text) >= 10:
-            grouping_key = text[:3] + text[len(text)//2-2:len(text)//2+2] + text[-3:] + str(len(text))
-        elif len(text) >= 6:
-            grouping_key = text[:3] + text[-3:] + str(len(text))
-        else:
-            grouping_key = text + str(len(text))
-        
-        # Store the normalized name for fast lookup
-        name_index[i] = text
-        
-        if grouping_key not in name_groups:
-            name_groups[grouping_key] = []
-        name_groups[grouping_key].append(i)
-    
-    # Check for duplicates only within groups using optimized approach
-    comparison_count = 0
-    
-    for group in name_groups.values():
-        if len(group) > 1:
-            # Compare each item in the group with others
-            for i in range(len(group)):
-                if comparison_count >= max_comparisons:
-                    # Early termination to prevent excessive computation
-                    print(f"Warning: Maximum comparisons ({max_comparisons}) reached. Stopping duplicate detection.")
-                    return potential_duplicates
-                
-                idx1 = group[i]
-                name1 = df_copy.iloc[idx1][name_column]
-                
-                # Only compare with remaining items in group to avoid duplicate comparisons
-                for j in range(i + 1, len(group)):
-                    if comparison_count >= max_comparisons:
-                        # Early termination to prevent excessive computation
-                        print(f"Warning: Maximum comparisons ({max_comparisons}) reached. Stopping duplicate detection.")
+
+        # If partition is small, do direct pairwise comparison within the partition
+        if len(indices) <= 60:
+            for a in range(len(indices)):
+                idx1 = indices[a]
+                n1 = df_work.iloc[idx1][name_column]
+                if pd.isna(n1):
+                    continue
+                for b in range(a + 1, len(indices)):
+                    if comparisons_done >= max_comparisons:
                         return potential_duplicates
-                    
-                    idx2 = group[j]
-                    name2 = df_copy.iloc[idx2][name_column]
-                    
-                    # Use our improved matching logic
-                    if is_potentially_similar_name(name1, name2, threshold):
-                        scores = get_name_confidence_score(name1, name2)
-                        potential_duplicates.append((idx1, idx2, scores['confidence']))
-                        comparison_count += 1
-    
+
+                    idx2 = indices[b]
+                    n2 = df_work.iloc[idx2][name_column]
+                    if pd.isna(n2):
+                        continue
+
+                    pair = (min(idx1, idx2), max(idx1, idx2))
+                    if pair in checked_pairs:
+                        continue
+                    checked_pairs.add(pair)
+                    comparisons_done += 1
+
+                    if is_potentially_similar_name(n1, n2, threshold):
+                        scores = get_name_confidence_score(n1, n2)
+                        if scores['confidence'] >= threshold:
+                            potential_duplicates.append((pair[0], pair[1], scores['confidence']))
+            continue
+
+        # For larger partitions, build token and prefix inverted indexes
+        buckets: dict[str, list[int]] = {}
+        for idx in indices:
+            name_val = df_work.iloc[idx][name_column]
+            if pd.isna(name_val):
+                continue
+            raw = str(name_val).lower()
+            tokens = [t for t in re.findall(r'[a-z0-9]+', raw) if len(t) >= 3 and t not in stopwords]
+            clean_str = ''.join(re.findall(r'[a-z0-9]', raw))
+            prefix = clean_str[:5] if len(clean_str) >= 5 else clean_str
+
+            keys = set(tokens)
+            if prefix:
+                keys.add(f"pfx:{prefix}")
+
+            for k in keys:
+                buckets.setdefault(k, []).append(idx)
+
+        for bucket_key, b_indices in buckets.items():
+            # Skip overly dense generic buckets to prevent combinatorial explosion
+            if len(b_indices) < 2 or len(b_indices) > 200:
+                continue
+
+            for a in range(len(b_indices)):
+                idx1 = b_indices[a]
+                n1 = df_work.iloc[idx1][name_column]
+                if pd.isna(n1):
+                    continue
+
+                for b in range(a + 1, len(b_indices)):
+                    if comparisons_done >= max_comparisons:
+                        return potential_duplicates
+
+                    idx2 = b_indices[b]
+                    pair = (min(idx1, idx2), max(idx1, idx2))
+                    if pair in checked_pairs:
+                        continue
+                    checked_pairs.add(pair)
+
+                    n2 = df_work.iloc[idx2][name_column]
+                    if pd.isna(n2):
+                        continue
+
+                    comparisons_done += 1
+                    if is_potentially_similar_name(n1, n2, threshold):
+                        scores = get_name_confidence_score(n1, n2)
+                        if scores['confidence'] >= threshold:
+                            potential_duplicates.append((pair[0], pair[1], scores['confidence']))
+
     return potential_duplicates
 
 
@@ -1257,8 +1194,13 @@ def _run_fuzzy_dedup(
     auto_merge_high_threshold: float = 0.95,
     auto_merge_standard_threshold: float = 0.90,
     review_queue_threshold: float = 0.80,
+    resolver_map: Optional[Mapping[str, Any]] = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Run fuzzy name deduplication on a merged DataFrame with confidence tiers.
+
+    Merges matching rows non-destructively using column resolvers so no data
+    from merged rows is lost. Scopes merges within identical platforms and tracks
+    transitive duplicate chains.
 
     Args:
         df: Merged DataFrame to deduplicate.
@@ -1266,6 +1208,7 @@ def _run_fuzzy_dedup(
         auto_merge_high_threshold: Confidence >= this -> auto-merge (high confidence).
         auto_merge_standard_threshold: Confidence in [0.90, this) -> auto-merge (standard).
         review_queue_threshold: Confidence in [this, 0.90) -> review queue (not auto-merged).
+        resolver_map: Column resolver dictionary for non-destructive merging.
 
     Returns:
         Tuple of (deduplicated DataFrame, review_queue list).
@@ -1273,11 +1216,13 @@ def _run_fuzzy_dedup(
     if df.empty or "name" not in df.columns:
         return df, []
 
+    df = df.reset_index(drop=True)
+    effective_res = resolver_map or default_resolver
     review_queue: list[dict] = []
     auto_merged: list[dict] = []
     idx_to_drop: set[int] = set()
 
-    # Find potential duplicates using existing function
+    # Find potential duplicates using token-and-prefix inverted indexing
     potential_dups = identify_potential_duplicates(
         df,
         name_column="name",
@@ -1286,11 +1231,26 @@ def _run_fuzzy_dedup(
         use_multiprocessing=False,
     )
 
+    parent_map: dict[int, int] = {}
+
+    def find_root(i: int) -> int:
+        curr = i
+        while curr in parent_map:
+            curr = parent_map[curr]
+        return curr
+
+    def data_completeness(row):
+        non_null = row.notna().sum()
+        summary_len = len(str(row.get("summary", ""))) if pd.notna(row.get("summary")) else 0
+        return non_null + summary_len / 10.0
+
     for idx1, idx2, confidence in potential_dups:
-        name1 = df.iloc[idx1]["name"]
-        name2 = df.iloc[idx2]["name"]
-        platform1 = df.iloc[idx1].get("platform", "")
-        platform2 = df.iloc[idx2].get("platform", "")
+        platform1 = str(df.iloc[idx1].get("platform", "") or "").strip()
+        platform2 = str(df.iloc[idx2].get("platform", "") or "").strip()
+
+        # Only auto-merge if on the same platform (or platforms are missing/unspecified)
+        if platform1 and platform2 and platform1 != platform2:
+            continue
 
         if confidence >= auto_merge_high_threshold:
             tier = "auto_merge_high"
@@ -1299,35 +1259,55 @@ def _run_fuzzy_dedup(
         else:
             tier = "review_queue"
 
+        r1 = find_root(idx1)
+        r2 = find_root(idx2)
+
         if tier == "review_queue":
-            review_queue.append({
-                "name1": name1,
-                "name2": name2,
-                "confidence": round(confidence, 4),
-                "platform1": platform1,
-                "platform2": platform2,
-                "merged": False,
-            })
+            if r1 != r2 and r1 not in idx_to_drop and r2 not in idx_to_drop:
+                review_queue.append({
+                    "name1": df.iloc[r1]["name"],
+                    "name2": df.iloc[r2]["name"],
+                    "confidence": round(confidence, 4),
+                    "platform1": df.iloc[r1].get("platform", ""),
+                    "platform2": df.iloc[r2].get("platform", ""),
+                    "merged": False,
+                })
             continue
 
-        # Auto-merge: keep the row with better data (longer summary, more complete fields)
-        row1 = df.iloc[idx1]
-        row2 = df.iloc[idx2]
+        if r1 == r2:
+            continue
 
-        def data_completeness(row):
-            non_null = row.notna().sum()
-            summary_len = len(str(row.get("summary", ""))) if pd.notna(row.get("summary")) else 0
-            return non_null + summary_len / 10.0
-
-        if data_completeness(row2) > data_completeness(row1):
-            keep_idx, drop_idx = idx2, idx1
+        # Auto-merge: keep row with more complete data
+        if data_completeness(df.iloc[r2]) > data_completeness(df.iloc[r1]):
+            keep_idx, drop_idx = r2, r1
         else:
-            keep_idx, drop_idx = idx1, idx2
+            keep_idx, drop_idx = r1, r2
 
+        parent_map[drop_idx] = keep_idx
         idx_to_drop.add(drop_idx)
+
+        # Non-destructive merge: apply column resolvers to combine values from drop_idx into keep_idx
+        for col in df.columns:
+            if col in ("name", "platform"):
+                continue
+            res_fn = effective_res.get(col, pick_first)
+            vk = df.at[keep_idx, col]
+            vd = df.at[drop_idx, col]
+
+            if pd.isna(vk) and pd.notna(vd):
+                df.at[keep_idx, col] = vd
+            elif pd.notna(vk) and pd.notna(vd):
+                pair_s = pd.Series([vk, vd])
+                if callable(res_fn):
+                    df.at[keep_idx, col] = res_fn(pair_s)
+                elif res_fn == "min":
+                    df.at[keep_idx, col] = pair_s.dropna().min() if not pair_s.dropna().empty else np.nan
+                elif res_fn == "max":
+                    df.at[keep_idx, col] = pair_s.dropna().max() if not pair_s.dropna().empty else np.nan
+
         auto_merged.append({
-            "name1": name1,
-            "name2": name2,
+            "name1": df.iloc[keep_idx]["name"],
+            "name2": df.iloc[drop_idx]["name"],
             "confidence": round(confidence, 4),
             "tier": tier,
             "platform": df.iloc[keep_idx].get("platform", ""),
@@ -1343,9 +1323,9 @@ def _run_fuzzy_dedup(
     if review_queue:
         print(f"[fuzzy dedup] Review queue: {len(review_queue)} pairs")
 
-    # Drop auto-merged rows
+    # Drop auto-merged rows and reset index cleanly
     if idx_to_drop:
-        df = df.drop(index=list(idx_to_drop))
+        df = df.drop(index=list(idx_to_drop)).reset_index(drop=True)
         print(f"[fuzzy dedup] Dropped {len(idx_to_drop)} duplicate rows")
 
     # Write review queue to file
@@ -1442,7 +1422,11 @@ def run_merge_pipeline(
     # Fuzzy name dedup after merge
     fuzzy_dedup_stats = None
     if use_name_match_key:
-        merged, review_queue = _run_fuzzy_dedup(merged, output_dir=output_dir)
+        merged, review_queue = _run_fuzzy_dedup(
+            merged,
+            output_dir=output_dir,
+            resolver_map=effective_resolver,
+        )
         fuzzy_dedup_stats = {
             "review_queue_count": len(review_queue),
             "review_queue_file_path": f"{output_dir}/review_queue.csv" if output_dir else "",

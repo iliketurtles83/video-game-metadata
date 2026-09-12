@@ -26,7 +26,7 @@ def test_basic_functionality():
     from utils.resolvers import (
         collect_unique,
         collect_unique_ordered,
-        any_truthy_priority
+        mean_rating
     )
     
     print("✓ All imports successful")
@@ -56,6 +56,12 @@ def test_basic_functionality():
     result = collect_unique(pd.Series(values))
     assert 'action' in str(result) and 'adventure' in str(result)
     print("✓ collect_unique works")
+    
+    # Test mean rating
+    values = [8.0, 9.0, 7.0]
+    result = mean_rating(pd.Series(values))
+    assert result == 8.0
+    print("✓ mean_rating works")
     
     print("✓ All core functionality tests passed")
 

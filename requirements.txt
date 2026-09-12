@@ -1,6 +1,7 @@
 # Core data processing
 pandas
 numpy
+pyarrow
 
 # Fuzzy matching
 rapidfuzz
