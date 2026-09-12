@@ -4,11 +4,16 @@ Video game metadata merge pipeline: ingest CSV/XML sources → normalize schema/
 
 ## How to run
 
-**Notebooks (recommended, run in order):**
-1. `notebooks/01-game_data_exploration.ipynb` — inspect source quality, field distribution, platform naming
-2. `notebooks/02-merge_game_data.ipynb` — merge all configured sources into unified dataset
-3. `notebooks/03-data_analysis.ipynb` — anomaly detection on merged data (missingness, platform naming, name quality, genre issues, date inconsistencies, duplicates) — EDA for downstream uses (gamelist updater, ML recommender, online database)
-4. `notebooks/04-data_cleaning.ipynb` — post-merge cleanup and normalization informed by analysis findings
+**CLI (recommended for pipeline execution):**
+- Full pipeline + all exports: `python -m utils full --export-all`
+- Merge stage only: `python -m utils run`
+- Clean stage only: `python -m utils clean --export-all`
+- Review queue: `python -m utils review --auto`
+- Dataset validation: `python -m utils validate`
+
+**Notebooks (for exploration and inspection):**
+1. `notebooks/01-game_data_exploration.ipynb` — inspect source quality, field distribution, platform naming on raw CSVs
+2. `notebooks/02-data_analysis.ipynb` — unified output data viewer, interactive title/genre/year search, SQL querying, and deep EDA on the cleaned dataset
 
 **Tests:** `python -m pytest tests/ -v` (99 tests across normalization, resolvers, fuzzy dedup, exports, provenance, date reconciliation, and validation)
 **Standalone test:** `python utils/test_pipeline_comprehensive.py` (runs outside pytest)

@@ -65,16 +65,12 @@ See the config files for fully commented examples of every option.
 
 ### Notebooks (for exploration and experimentation)
 
-Run notebooks in this order:
+Run notebooks for exploration and inspection:
 
-1. `01-game_data_exploration.ipynb`
-	Inspect source quality, field distribution, and platform naming issues.
-2. `02-merge_game_data.ipynb`
-	Merge all configured sources into a unified dataset.
-3. `03-data_cleaning.ipynb`
-	Apply post-merge cleanup and normalization rules.
-4. `04-data_analysis.ipynb`
-	Validate coverage, missingness, duplicates, and output quality.
+1. `notebooks/01-game_data_exploration.ipynb`
+	Inspect source quality, field distribution, and platform naming issues on raw CSVs.
+2. `notebooks/02-data_analysis.ipynb`
+	Unified output data viewer, interactive title/genre/year search, SQL querying, and deep EDA on the cleaned dataset.
 
 ## Canonical Schema (Core Columns)
 
