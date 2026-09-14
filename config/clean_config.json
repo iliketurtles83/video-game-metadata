@@ -68,7 +68,7 @@
 
     // Output paths (relative to project root)
     "output": {
-        "cleaned_pkl": "output/cleaned_df.pkl",
+        "cleaned_parquet": "output/cleaned_games.parquet",
         "cleaned_csv": "output/cleaned_games.csv"
     }
 }

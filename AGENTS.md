@@ -41,7 +41,7 @@ utils/        ← pipeline modules
   csv_export.py       ← write DataFrames to CSV, Parquet, and SQLite with indices
   review_queue.py     ← interactive & automated resolution of ambiguous fuzzy duplicates
   platform_registry.json ← unified canonical platform names & aliases
-output/         ← generated artifacts (merged_df.pkl, review_queue.csv, gitignored)
+output/         ← generated artifacts (merged_games.parquet, review_queue.csv, gitignored)
 scripts/        ← export_tables.sh (mdb-export for ARRM databases)
 tests/          ← pytest test suite (test_matching.py, test_high_impact.py, etc.)
 ```

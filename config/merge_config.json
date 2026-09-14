@@ -147,18 +147,11 @@
                 "game_title": "name",
                 "platform_name": "platform"
             }
-        },
-        {
-            "name": "gamelist_parsed",
-            "path": "csv/gamelist_parsed.csv",
-            "transforms": [
-                {"column": "rating", "operation": "scale", "factor": 10}
-            ]
         }
     ],
 
     "gamelists": {
-        "enabled": false,
+        "enabled": true,
         "dir": "lists"
     },
 
@@ -174,12 +167,12 @@
     },
 
     "output": {
-        // Where to write the merged DataFrame (pickle)
-        "merged_pkl": "output/merged_df.pkl",
+        // Where to write the merged DataFrame (Parquet)
+        "merged_parquet": "output/merged_games.parquet",
         // Where to write the merged DataFrame (CSV)
         "merged_csv": "output/merged_games.csv",
-        // Where to write the cleaned DataFrame (pickle)
-        "cleaned_pkl": "output/cleaned_df.pkl",
+        // Where to write the cleaned DataFrame (Parquet)
+        "cleaned_parquet": "output/cleaned_games.parquet",
         // Where to write the cleaned DataFrame (CSV)
         "cleaned_csv": "output/cleaned_games.csv"
     }

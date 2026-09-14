@@ -35,10 +35,10 @@ python -m utils full
 # Full pipeline with Parquet and SQLite DB exports
 python -m utils full --export-all
 
-# Merge only (produces merged_df.pkl + merged CSV)
+# Merge only (produces merged_games.parquet + merged CSV)
 python -m utils run
 
-# Clean only (reads merged_df.pkl, applies cleaning, exports CSV)
+# Clean only (reads merged_games.parquet, applies cleaning, exports CSV)
 python -m utils clean
 
 # Inspect and resolve ambiguous fuzzy matches (review queue)

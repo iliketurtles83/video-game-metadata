@@ -6,7 +6,7 @@ runs the merge pipeline, applies cleaning, and exports CSVs.
 
 Usage:
     python -m utils run --config config/merge_config.json
-    python -m utils pipeline clean --config config/clean_config.json --input output/merged_df.pkl
+    python -m utils clean --config config/clean_config.json --input output/merged_games.parquet
 """
 
 import json
@@ -174,11 +174,12 @@ def build_sources(config: dict, base_path: str = "."):
     # Add gamelist source if enabled
     gamelists = config.get("gamelists", {})
     if gamelists.get("enabled", False):
-        gamelist_dir = gamelists.get("dir", "lists")
+        gamelist_dir = str(Path(base_path) / gamelists.get("dir", "lists"))
+        systems_path = str(Path(base_path) / "utils" / "platform_registry.json")
         sources.append(
             SourceConfig(
                 name="gamelist",
-                loader=lambda: load_all_gamelists(lists_dir=gamelist_dir),
+                loader=lambda g=gamelist_dir, s=systems_path: load_all_gamelists(lists_dir=g, systems_file=s),
             )
         )
 
@@ -216,27 +217,21 @@ def run_merge(config_path: str, output_dir: Optional[str] = None, export_all: bo
 
     print(f"\nMerged: {len(merged_df)} rows, {merged_df['platform'].nunique()} unique platforms")
 
-    # Save merged pickle
-    merged_pkl = output_cfg.get("merged_pkl", "output/merged_df.pkl")
-    Path(merged_pkl).parent.mkdir(parents=True, exist_ok=True)
-    merged_df.to_pickle(merged_pkl)
-    print(f"Merged DataFrame saved to: {merged_pkl}")
-
-    # Save merged CSV
-    merged_csv = output_cfg.get("merged_csv")
-    if merged_csv:
-        Path(merged_csv).parent.mkdir(parents=True, exist_ok=True)
-        write_to_csv(merged_df, merged_csv, CANONICAL_SCHEMA)
-        print(f"Merged CSV saved to: {merged_csv}")
-
     # Save merged Parquet
-    merged_parquet = output_cfg.get("merged_parquet")
-    if export_all and not merged_parquet and merged_csv:
-        merged_parquet = str(Path(merged_csv).with_suffix(".parquet"))
+    merged_parquet = output_cfg.get("merged_parquet", "output/merged_games.parquet")
+    if export_all and not merged_parquet and output_cfg.get("merged_csv"):
+        merged_parquet = str(Path(output_cfg["merged_csv"]).with_suffix(".parquet"))
     if merged_parquet:
         Path(merged_parquet).parent.mkdir(parents=True, exist_ok=True)
         write_to_parquet(merged_df, merged_parquet, CANONICAL_SCHEMA)
         print(f"Merged Parquet saved to: {merged_parquet}")
+
+    # Save merged CSV
+    merged_csv = output_cfg.get("merged_csv", "output/merged_games.csv")
+    if merged_csv:
+        Path(merged_csv).parent.mkdir(parents=True, exist_ok=True)
+        write_to_csv(merged_df, merged_csv, CANONICAL_SCHEMA)
+        print(f"Merged CSV saved to: {merged_csv}")
 
     # Save merged SQLite
     merged_sqlite = output_cfg.get("merged_sqlite")
@@ -252,20 +247,32 @@ def run_merge(config_path: str, output_dir: Optional[str] = None, export_all: bo
 
 def run_clean(
     config_path: Optional[str] = None,
-    input_pkl: Optional[str] = None,
+    input_path: Optional[str] = None,
     merged_df: Optional[pd.DataFrame] = None,
     export_all: bool = False,
 ):
     """Run the cleaning pipeline."""
     if merged_df is None:
-        if input_pkl is None:
-            input_pkl = "output/merged_df.pkl"
-        if not Path(input_pkl).exists():
-            print(f"Error: input file not found: {input_pkl}")
-            print("Run 'pipeline run' first to generate the merged dataset.")
+        if input_path is None:
+            if Path("output/merged_games.parquet").exists():
+                input_path = "output/merged_games.parquet"
+            elif Path("output/merged_df.pkl").exists():
+                input_path = "output/merged_df.pkl"
+            else:
+                input_path = "output/merged_games.parquet"
+
+        if not Path(input_path).exists():
+            print(f"Error: input file not found: {input_path}")
+            print("Run 'python -m utils run' first to generate the merged dataset.")
             sys.exit(1)
-        print(f"Loading merged DataFrame from: {input_pkl}")
-        merged_df = pd.read_pickle(input_pkl)
+
+        print(f"Loading merged dataset from: {input_path}")
+        if str(input_path).endswith(".parquet"):
+            merged_df = pd.read_parquet(input_path)
+        elif str(input_path).endswith(".pkl") or str(input_path).endswith(".pickle"):
+            merged_df = pd.read_pickle(input_path)
+        else:
+            merged_df = pd.read_csv(input_path, low_memory=False)
 
     if config_path:
         config = load_merge_config(config_path)
@@ -308,26 +315,23 @@ def run_clean(
     cleaned_df = run_cleaning_pipeline(merged_df, **cleaning_kwargs)
 
     output_cfg = config.get("output", {})
-    cleaned_pkl = output_cfg.get("cleaned_pkl", "output/cleaned_df.pkl")
     cleaned_csv = output_cfg.get("cleaned_csv", "output/cleaned_games.csv")
-
-    Path(cleaned_pkl).parent.mkdir(parents=True, exist_ok=True)
-    cleaned_df.to_pickle(cleaned_pkl)
-    print(f"Cleaned DataFrame saved to: {cleaned_pkl}")
-
-    Path(cleaned_csv).parent.mkdir(parents=True, exist_ok=True)
-    cleaned_df["version"] = pd.Timestamp.utcnow().isoformat()
-    write_to_csv(cleaned_df, cleaned_csv, CANONICAL_SCHEMA)
-    print(f"Cleaned CSV saved to: {cleaned_csv} ({len(cleaned_df)} rows)")
+    cleaned_parquet = output_cfg.get("cleaned_parquet", "output/cleaned_games.parquet")
 
     # Save cleaned Parquet
-    cleaned_parquet = output_cfg.get("cleaned_parquet")
     if export_all and not cleaned_parquet and cleaned_csv:
         cleaned_parquet = str(Path(cleaned_csv).with_suffix(".parquet"))
     if cleaned_parquet:
         Path(cleaned_parquet).parent.mkdir(parents=True, exist_ok=True)
         write_to_parquet(cleaned_df, cleaned_parquet, CANONICAL_SCHEMA)
         print(f"Cleaned Parquet saved to: {cleaned_parquet}")
+
+    # Save cleaned CSV
+    if cleaned_csv:
+        Path(cleaned_csv).parent.mkdir(parents=True, exist_ok=True)
+        cleaned_df["version"] = pd.Timestamp.utcnow().isoformat()
+        write_to_csv(cleaned_df, cleaned_csv, CANONICAL_SCHEMA)
+        print(f"Cleaned CSV saved to: {cleaned_csv} ({len(cleaned_df)} rows)")
 
     # Save cleaned SQLite
     cleaned_sqlite = output_cfg.get("cleaned_sqlite")
@@ -365,7 +369,7 @@ def _default_clean_config() -> dict:
             "round_ratings": {"enabled": True, "columns": ["rating", "user_rating"], "decimals": 1},
         },
         "output": {
-            "cleaned_pkl": "output/cleaned_df.pkl",
+            "cleaned_parquet": "output/cleaned_games.parquet",
             "cleaned_csv": "output/cleaned_games.csv",
         },
     }
@@ -399,7 +403,7 @@ def main():
     clean_parser.add_argument("--config", "-c", default=None,
                               help="Path to clean config JSON (optional, uses defaults if omitted)")
     clean_parser.add_argument("--input", "-i", default=None,
-                              help="Path to merged DataFrame pickle (default: output/merged_df.pkl)")
+                              help="Path to merged dataset (default: output/merged_games.parquet)")
     clean_parser.add_argument("--export-all", "-e", action="store_true",
                               help="Export Parquet and SQLite databases alongside CSV")
 

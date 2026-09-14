@@ -72,7 +72,8 @@ DataFramePostLoad = Callable[[pd.DataFrame], pd.DataFrame]
 def normalize_platform(platform_name: str) -> str:
     """Normalize a platform name using the unified platform registry.
 
-    Uses exact match first, then fuzzy fallback (threshold 75).
+    Uses exact match first, then lowercase match, then de-hyphenated match,
+    then fuzzy fallback (threshold 75).
     Tracks unmapped platforms for audit reporting.
 
     Args:
@@ -89,15 +90,25 @@ def normalize_platform(platform_name: str) -> str:
 
     registry, alias_map = _load_platform_registry()
 
-    # Exact match (includes canonical names as their own keys)
+    # 1. Exact match (includes canonical names and aliases as stored)
     if stripped in alias_map:
         return alias_map[stripped]
 
-    # Fuzzy matching fallback against aliases (lowered threshold to 75)
+    # 2. Case-insensitive exact match
+    low = stripped.lower()
+    if _GLOBAL_LOWER_ALIAS_MAP and low in _GLOBAL_LOWER_ALIAS_MAP:
+        return _GLOBAL_LOWER_ALIAS_MAP[low]
+
+    # 3. De-hyphenated case-insensitive match (e.g., 'xbox-one' -> 'xbox one')
+    dehyphen = low.replace("-", " ")
+    if _GLOBAL_DEHYPHEN_ALIAS_MAP and dehyphen in _GLOBAL_DEHYPHEN_ALIAS_MAP:
+        return _GLOBAL_DEHYPHEN_ALIAS_MAP[dehyphen]
+
+    # 4. Fuzzy matching fallback against aliases (lowered threshold to 75)
     all_aliases = list(alias_map.keys())
     if all_aliases:
         best_match = process.extractOne(
-            stripped,
+            dehyphen,
             all_aliases,
             scorer=fuzz.token_set_ratio,
             score_cutoff=75,
@@ -261,6 +272,8 @@ def clean_filename(filename: Any) -> Any:
 _GLOBAL_PLATFORM_REGISTRY: Optional[dict[str, dict[str, list[str]]]] = None
 # Flat alias->canonical lookup for O(1) exact matches
 _GLOBAL_ALIAS_MAP: Optional[dict[str, str]] = None
+_GLOBAL_LOWER_ALIAS_MAP: Optional[dict[str, str]] = None
+_GLOBAL_DEHYPHEN_ALIAS_MAP: Optional[dict[str, str]] = None
 # Track unmapped platform names for audit
 _unmapped_platforms: list[str] = []
 
@@ -271,7 +284,7 @@ def _load_platform_registry() -> tuple[dict[str, dict[str, list[str]]], dict[str
     Returns:
         Tuple of (registry dict, flat alias->canonical lookup dict)
     """
-    global _GLOBAL_PLATFORM_REGISTRY, _GLOBAL_ALIAS_MAP
+    global _GLOBAL_PLATFORM_REGISTRY, _GLOBAL_ALIAS_MAP, _GLOBAL_LOWER_ALIAS_MAP, _GLOBAL_DEHYPHEN_ALIAS_MAP
     if _GLOBAL_PLATFORM_REGISTRY is None:
         registry_path = Path(__file__).parent / "platform_registry.json"
         try:
@@ -281,12 +294,23 @@ def _load_platform_registry() -> tuple[dict[str, dict[str, list[str]]], dict[str
             _GLOBAL_PLATFORM_REGISTRY = {}
         # Build flat alias->canonical lookup
         _GLOBAL_ALIAS_MAP = {}
+        _GLOBAL_LOWER_ALIAS_MAP = {}
+        _GLOBAL_DEHYPHEN_ALIAS_MAP = {}
         for canonical, data in _GLOBAL_PLATFORM_REGISTRY.items():
+            c_low = canonical.strip().lower()
+            c_dh = c_low.replace("-", " ")
+            _GLOBAL_ALIAS_MAP[canonical] = canonical
+            _GLOBAL_LOWER_ALIAS_MAP[c_low] = canonical
+            _GLOBAL_DEHYPHEN_ALIAS_MAP[c_dh] = canonical
+
             aliases = data.get("aliases", [])
             for alias in aliases:
-                _GLOBAL_ALIAS_MAP[alias] = canonical
-            # Also map the canonical name to itself
-            _GLOBAL_ALIAS_MAP[canonical] = canonical
+                a_str = alias.strip()
+                a_low = a_str.lower()
+                a_dh = a_low.replace("-", " ")
+                _GLOBAL_ALIAS_MAP[a_str] = canonical
+                _GLOBAL_LOWER_ALIAS_MAP[a_low] = canonical
+                _GLOBAL_DEHYPHEN_ALIAS_MAP[a_dh] = canonical
     return _GLOBAL_PLATFORM_REGISTRY, _GLOBAL_ALIAS_MAP
 
 
@@ -1111,10 +1135,28 @@ def generate_audit_report(
 
     # Source contribution
     source_names = [main_config.name] + [sc.name for sc in source_configs]
+    source_counts = {}
+    exclusive_counts = {}
+    multi_source_count = 0
+    single_source_count = 0
+
+    if "_source" in df.columns and not df["_source"].empty:
+        source_series = df["_source"].fillna("").astype(str)
+        for sname in source_names:
+            source_counts[sname] = int(source_series.str.contains(rf"\b{re.escape(sname)}\b", regex=True).sum())
+            exclusive_counts[sname] = int((source_series == sname).sum())
+
+        is_multi = source_series.str.contains(",")
+        multi_source_count = int(is_multi.sum())
+        single_source_count = int((~is_multi & (source_series != "")).sum())
+
     source_contribution = {
-        "note": "Per-source row counts require _source column tracking (not yet implemented)",
         "total_sources": len(source_names),
         "source_names": source_names,
+        "rows_per_source": source_counts,
+        "exclusive_rows_per_source": exclusive_counts,
+        "multi_source_rows": multi_source_count,
+        "single_source_rows": single_source_count,
     }
 
     report = {
@@ -1147,6 +1189,7 @@ def _run_fuzzy_dedup(
     auto_merge_standard_threshold: float = 0.90,
     review_queue_threshold: float = 0.80,
     resolver_map: Optional[Mapping[str, Any]] = None,
+    stats: Optional[dict] = None,
 ) -> tuple[pd.DataFrame, list[dict]]:
     """Run fuzzy name deduplication on a merged DataFrame with confidence tiers.
 
@@ -1297,6 +1340,12 @@ def _run_fuzzy_dedup(
         else:
             print(f"[fuzzy dedup] Review queue: {len(review_queue)} pairs (no output_dir specified)")
 
+    if stats is not None:
+        stats["auto_merged_high_count"] = sum(1 for m in auto_merged if m.get("tier") == "auto_merge_high")
+        stats["auto_merged_standard_count"] = sum(1 for m in auto_merged if m.get("tier") == "auto_merge_standard")
+        stats["review_queue_count"] = len(review_queue)
+        stats["review_queue_file_path"] = f"{output_dir}/review_queue.csv" if output_dir else ""
+
     return df, review_queue
 
 
@@ -1346,6 +1395,9 @@ def run_merge_pipeline(
             for column in effective_key_columns
         )
 
+    # Clear unmapped platforms tracking for a fresh pipeline run
+    _unmapped_platforms.clear()
+
     # Pre-merge dedup on main source
     merged = prepare_source(
         main_config,
@@ -1376,17 +1428,14 @@ def run_merge_pipeline(
         print(f"main size: {merged_length}, {source_config.name} size: {source_length}, new games: {games_added}")
 
     # Fuzzy name dedup after merge
-    fuzzy_dedup_stats = None
+    fuzzy_dedup_stats = {}
     if use_name_match_key:
         merged, review_queue = _run_fuzzy_dedup(
             merged,
             output_dir=output_dir,
             resolver_map=effective_resolver,
+            stats=fuzzy_dedup_stats,
         )
-        fuzzy_dedup_stats = {
-            "review_queue_count": len(review_queue),
-            "review_queue_file_path": f"{output_dir}/review_queue.csv" if output_dir else "",
-        }
 
     if NAME_MATCH_KEY_COLUMN in merged.columns:
         merged = merged.drop(columns=[NAME_MATCH_KEY_COLUMN])
